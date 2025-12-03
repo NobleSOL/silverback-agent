@@ -11,6 +11,11 @@ import {
     explainAMMFunction,
     identifyScamSignalsFunction
 } from "../education-functions";
+import {
+    getMarketOverviewFunction,
+    getDefiMetricsFunction,
+    getVirtualsDataFunction
+} from "../market-data-functions";
 
 /**
  * Twitter Worker - Handles all Twitter/X interactions
@@ -23,44 +28,61 @@ export const twitterWorker = new GameWorker({
     name: "Twitter Worker",
     description: `This worker handles Twitter/X interactions for community building.
 
-    RATE LIMITING - CRITICAL:
+    === DATA-DRIVEN CONTENT - CRITICAL ===
+    BEFORE posting ANY market update:
+    1. ALWAYS call get_market_overview first to get real BTC/ETH prices and changes
+    2. Use get_defi_metrics for DeFi TVL data
+    3. Use get_virtuals_ecosystem for Virtuals Protocol data
+
+    NEVER post vague statements like "DeFi Market Update: Recent surge in stablecoin demand"
+    ALWAYS include specific numbers like "Stablecoin market cap hits $150B, up 5% this week"
+
+    === RATE LIMITING ===
     - Post MAXIMUM 1 tweet per task/step
-    - Wait for the next step cycle before posting again
-    - If you already posted this step, DO NOTHING and return success
-    - Quality over quantity - fewer high-quality tweets is better
+    - Quality over quantity - data-rich tweets perform better
+
+    === CONTENT PRIORITIES (in order) ===
+    1. Virtuals Protocol Launch Promotion - We're LIVE on Virtuals! Share this news.
+    2. Silverback DEX Features - Base DEX is LIVE at https://silverbackdefi.app
+    3. Market Updates with REAL DATA - Always include $ amounts, % changes
+    4. Community Engagement - Answer questions, engage with mentions
+    5. DeFi Education - Tie to current market conditions with data
 
     === CURRENT STATUS ===
-    - BASE DEX: LIVE ✅ (can discuss features, direct users to https://silverbackdefi.app)
-    - KEETA DEX: Coming Soon 🔜 (build hype for 400ms settlement)
-    - $BACK Token: Live on Base (explain non-inflationary tokenomics)
+    - $BACK Token: LIVE on Virtuals Protocol (Base chain)
+    - BASE DEX: LIVE ✅ at https://silverbackdefi.app
+    - KEETA DEX: Coming Soon 🔜 (400ms settlement)
 
-    Capabilities:
-    1. Content Creation: Post tweets about Silverback DEX, DeFi education, $BACK token
-    2. Educational Threads: Create threads about DeFi concepts (use sparingly)
-    3. Community Engagement: Reply to mentions and answer questions
-    4. Scam Warnings: Alert the community about potential scams
+    === EXAMPLE GOOD TWEETS ===
+    - "ETH up 3.2% to $3,450 today. Base network TVL continues growing. Perfect time to explore Silverback DEX - live at silverbackdefi.app"
+    - "$BACK is live on Virtuals Protocol! Non-inflationary tokenomics: protocol revenue → buybacks → staking rewards. No new supply dilution."
+    - "DeFi TVL: $95B across major protocols. Silverback DEX on Base offering 0.3% swap fees with OpenOcean aggregation for best rates."
 
-    What to tweet about:
-    - Silverback DEX features on Base (classic pools, concentrated pools, aggregation)
-    - $BACK token benefits (staking, revenue sharing, non-inflationary)
-    - Upcoming Keeta launch (400ms settlement, custom fee pools)
-    - DeFi education (AMMs, liquidity, impermanent loss)
-    - Scam awareness and security tips
-    - Direct users to docs: https://docs.silverbackdefi.app
+    === EXAMPLE BAD TWEETS (AVOID) ===
+    - "DeFi market showing interesting movements" (no specific data)
+    - "Stablecoin demand increasing" (no numbers)
+    - "Market looking bullish" (vague, no context)
 
-    What NOT to tweet about:
-    - Made-up statistics or pool data (only share what you can verify)
-    - Price predictions or financial advice
-    - Specific trade recommendations
-    - Fake metrics or volume numbers
+    === WHAT TO TWEET ABOUT ===
+    - Virtuals Protocol launch and $BACK token
+    - Silverback DEX features (classic pools, concentrated pools, aggregation)
+    - Market updates WITH REAL NUMBERS from get_market_overview
+    - DeFi trends WITH ACTUAL TVL DATA from get_defi_metrics
+    - Keeta network launch hype (400ms settlement, custom fees)
 
-    IMPORTANT: Always direct users to the docs for detailed questions.`,
+    IMPORTANT: Always use the market data functions before posting market-related content.`,
     functions: [
+        // Market data functions - call these FIRST before posting
+        getMarketOverviewFunction,
+        getDefiMetricsFunction,
+        getVirtualsDataFunction,
+        // Twitter posting functions
         postThreadFunction,
         postTweetFunction,
         replyToTweetFunction,
         searchMentionsFunction,
         postDailyStatsFunction,
+        // Education functions
         explainImpermanentLossFunction,
         explainAMMFunction,
         identifyScamSignalsFunction
