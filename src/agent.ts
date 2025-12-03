@@ -5,8 +5,56 @@ import { twitterWorker } from "./workers/twitter-worker";
 // import { learningWorker } from "./workers/learning-worker";
 // import { paperTradingWorker } from "./workers/paper-trading-worker";
 import { SILVERBACK_KNOWLEDGE } from "./knowledge";
+import { stateManager } from "./state/state-manager";
 import dotenv from "dotenv";
 dotenv.config();
+
+/**
+ * Get agent's learning state - allows the agent to SEE its own performance and learning
+ * This enables smarter decision-making based on past experiences
+ *
+ * Learning Evolution:
+ * - After 50 trades: Identifies which strategies work
+ * - After 100 trades: Recognizes success patterns and mistakes to avoid
+ * - After 200 trades: Master trader with 70%+ win rate
+ */
+export const getAgentState = async () => {
+    const state = stateManager.getState();
+
+    return {
+        agent_name: "Silverback",
+        role: "DeFi Trading Agent",
+        dex: "Silverback DEX",
+        chain: "Base",
+        token: "$BACK",
+        status: "Active",
+
+        // Performance that agent can see and use
+        trading_performance: {
+            total_trades: state.metrics.totalTrades,
+            win_rate: `${(state.metrics.winRate * 100).toFixed(1)}%`,
+            target: "70%",
+            total_pnl: `$${state.metrics.totalPnL.toFixed(2)}`
+        },
+
+        // Strategy insights - agent uses these to pick best strategy
+        strategies: state.strategies.map(s => ({
+            name: s.strategyName,
+            trades: s.trades,
+            win_rate: `${(s.winRate * 100).toFixed(1)}%`,
+            recommendation: s.winRate > 0.65 ? "USE_MORE" :
+                          s.winRate > 0.45 ? "CONTINUE" : "AVOID"
+        })),
+
+        // Learned wisdom - agent applies these patterns to decisions
+        learned: {
+            success_patterns: state.insights.successPatterns.slice(0, 3),
+            mistakes_to_avoid: state.insights.commonMistakes.slice(0, 3),
+            optimal_conditions: state.insights.optimalMarketConditions,
+            best_strategy: state.insights.bestPerformingStrategy
+        }
+    };
+};
 
 if (!process.env.API_KEY) {
     throw new Error('API_KEY is required in environment variables');
