@@ -1,0 +1,35 @@
+{
+  "name": "agentsilverback",
+  "version": "1.0.0",
+  "description": "Silverback DEX AI Agent powered by Virtuals GAME",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "silverback",
+    "dex",
+    "ai-agent",
+    "virtuals"
+  ],
+  "author": "Silverback DEX",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.12.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@virtuals-protocol/game": "^0.1.9",
+    "@virtuals-protocol/game-twitter-node": "^0.1.4",
+    "@virtuals-protocol/game-twitter-plugin": "^0.1.11",
+    "better-sqlite3": "^12.5.0",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.15.0"
+  }
+}
