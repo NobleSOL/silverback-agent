@@ -4,6 +4,7 @@ import {
     ExecutableGameFunctionStatus,
 } from "@virtuals-protocol/game";
 import { ethers } from "ethers";
+import { stateManager } from "./state/state-manager";
 
 // Base Mainnet Configuration
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
@@ -390,5 +391,199 @@ export const tokenSwapFunction = new GameFunction({
                 }
             })
         );
+    }
+});
+
+/**
+ * Analyze Trade Opportunity - Check historical performance before trading
+ * This is the agent's "pre-flight check" that uses learned wisdom
+ *
+ * Before every paper trade, the agent should call this to:
+ * 1. Check if the proposed strategy has been profitable
+ * 2. Verify current market conditions match successful patterns
+ * 3. Avoid repeating known mistakes
+ * 4. Get a GO / CAUTION / AVOID recommendation
+ */
+export const analyzeTradeOpportunityFunction = new GameFunction({
+    name: "analyze_trade_opportunity",
+    description: `CRITICAL: Call this BEFORE every paper trade to check historical performance.
+
+Returns a recommendation based on learned wisdom:
+- GO: Strategy has >60% win rate in current conditions
+- CAUTION: Mixed results, proceed with smaller position
+- AVOID: Strategy has poor performance in current conditions
+
+The agent learns over time. Early trades may show "INSUFFICIENT_DATA".
+After 50+ trades, recommendations become highly reliable.`,
+    args: [
+        {
+            name: "strategy",
+            description: "Strategy to use: 'momentum' or 'mean_reversion'"
+        },
+        {
+            name: "market_condition",
+            description: "Current market condition: 'trending_up', 'trending_down', 'ranging', or 'volatile'"
+        },
+        {
+            name: "token_pair",
+            description: "Token pair being traded (e.g., 'ETH/USDC')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            const state = stateManager.getState();
+
+            logger(`Analyzing trade opportunity: ${args.strategy} in ${args.market_condition} market`);
+
+            // Get strategy performance
+            const strategyData = state.strategies.find(s => s.strategyName === args.strategy);
+
+            // Check if we have enough data
+            const totalTrades = state.metrics.totalTrades;
+            if (totalTrades < 10) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({
+                        recommendation: "GO",
+                        confidence: "LOW",
+                        reason: "INSUFFICIENT_DATA - Need more trades to build learning. Proceed with small positions.",
+                        strategy_stats: {
+                            name: args.strategy,
+                            trades: strategyData?.trades || 0,
+                            win_rate: strategyData ? `${(strategyData.winRate * 100).toFixed(1)}%` : "0%"
+                        },
+                        total_trades_for_learning: totalTrades,
+                        minimum_for_confidence: 50,
+                        action: "PROCEED_WITH_CAUTION - Learning phase"
+                    })
+                );
+            }
+
+            // Analyze strategy performance
+            const strategyWinRate = strategyData?.winRate || 0;
+            const strategyTrades = strategyData?.trades || 0;
+
+            // Check if market conditions match optimal conditions
+            const optimalConditions = state.insights.optimalMarketConditions;
+            const conditionsMatch = args.market_condition?.toLowerCase().includes(optimalConditions?.toLowerCase() || '') ||
+                                   optimalConditions?.toLowerCase().includes(args.market_condition?.toLowerCase() || '');
+
+            // Check for relevant success patterns
+            const successPatterns = state.insights.successPatterns || [];
+            const relevantSuccessPattern = successPatterns.find(p =>
+                p.toLowerCase().includes(args.strategy?.toLowerCase() || '') ||
+                p.toLowerCase().includes(args.market_condition?.toLowerCase() || '')
+            );
+
+            // Check for mistakes to avoid
+            const commonMistakes = state.insights.commonMistakes || [];
+            const relevantMistake = commonMistakes.find(m =>
+                m.toLowerCase().includes(args.strategy?.toLowerCase() || '') ||
+                m.toLowerCase().includes(args.market_condition?.toLowerCase() || '')
+            );
+
+            // Calculate recommendation
+            let recommendation: "GO" | "CAUTION" | "AVOID";
+            let confidence: "HIGH" | "MEDIUM" | "LOW";
+            let reasons: string[] = [];
+
+            // Decision logic based on learned data
+            if (strategyWinRate >= 0.65 && strategyTrades >= 10) {
+                recommendation = "GO";
+                confidence = strategyTrades >= 30 ? "HIGH" : "MEDIUM";
+                reasons.push(`${args.strategy} has ${(strategyWinRate * 100).toFixed(1)}% win rate over ${strategyTrades} trades`);
+            } else if (strategyWinRate >= 0.45 && strategyWinRate < 0.65) {
+                recommendation = "CAUTION";
+                confidence = "MEDIUM";
+                reasons.push(`${args.strategy} has ${(strategyWinRate * 100).toFixed(1)}% win rate - moderate performance`);
+            } else if (strategyWinRate < 0.45 && strategyTrades >= 10) {
+                recommendation = "AVOID";
+                confidence = strategyTrades >= 20 ? "HIGH" : "MEDIUM";
+                reasons.push(`${args.strategy} has only ${(strategyWinRate * 100).toFixed(1)}% win rate - poor performance`);
+            } else {
+                recommendation = "CAUTION";
+                confidence = "LOW";
+                reasons.push(`Insufficient trades (${strategyTrades}) to make confident recommendation`);
+            }
+
+            // Adjust based on conditions match
+            if (conditionsMatch && strategyWinRate >= 0.5) {
+                if (recommendation === "CAUTION") {
+                    recommendation = "GO";
+                    reasons.push(`Current ${args.market_condition} matches optimal conditions: ${optimalConditions}`);
+                }
+            }
+
+            // Adjust based on success pattern match
+            if (relevantSuccessPattern) {
+                reasons.push(`Matches success pattern: "${relevantSuccessPattern}"`);
+                if (recommendation === "CAUTION") {
+                    recommendation = "GO";
+                    confidence = "MEDIUM";
+                }
+            }
+
+            // Adjust based on mistake pattern match (override to AVOID)
+            if (relevantMistake && strategyWinRate < 0.5) {
+                recommendation = "AVOID";
+                reasons.push(`WARNING: Matches known mistake: "${relevantMistake}"`);
+            }
+
+            // Position sizing recommendation
+            let positionSize: "FULL" | "HALF" | "QUARTER" | "SKIP";
+            switch (recommendation) {
+                case "GO":
+                    positionSize = confidence === "HIGH" ? "FULL" : "HALF";
+                    break;
+                case "CAUTION":
+                    positionSize = "QUARTER";
+                    break;
+                case "AVOID":
+                    positionSize = "SKIP";
+                    break;
+            }
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    recommendation,
+                    confidence,
+                    position_size: positionSize,
+                    reasons,
+                    strategy_stats: {
+                        name: args.strategy,
+                        trades: strategyTrades,
+                        win_rate: `${(strategyWinRate * 100).toFixed(1)}%`,
+                        status: strategyWinRate >= 0.65 ? "PROFITABLE" :
+                               strategyWinRate >= 0.45 ? "BREAK_EVEN" : "LOSING"
+                    },
+                    market_analysis: {
+                        current_condition: args.market_condition,
+                        optimal_condition: optimalConditions,
+                        conditions_match: conditionsMatch
+                    },
+                    learned_wisdom: {
+                        relevant_success_pattern: relevantSuccessPattern || "None found",
+                        relevant_mistake_to_avoid: relevantMistake || "None found",
+                        best_performing_strategy: state.insights.bestPerformingStrategy
+                    },
+                    overall_performance: {
+                        total_trades: totalTrades,
+                        overall_win_rate: `${(state.metrics.winRate * 100).toFixed(1)}%`,
+                        total_pnl: `$${state.metrics.totalPnL.toFixed(2)}`
+                    },
+                    action: recommendation === "GO"
+                        ? `PROCEED with ${positionSize} position using ${args.strategy}`
+                        : recommendation === "CAUTION"
+                            ? `PROCEED CAREFULLY with ${positionSize} position`
+                            : `SKIP THIS TRADE - Historical data suggests poor outcome`
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to analyze trade opportunity: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
     }
 });

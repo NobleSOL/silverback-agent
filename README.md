@@ -154,19 +154,39 @@ docker run -d -e API_KEY=your_key silverback-agent
 ## Project Structure
 
 \`\`\`
-agentsilverback/
+silverback-agent/
 ├── src/
-│   ├── agent.ts               # Agent configuration
-│   ├── worker.ts              # DEX worker
-│   ├── functions.ts           # DEX API functions
-│   ├── twitter-worker.ts      # Twitter worker
-│   ├── twitter-functions.ts   # Twitter API functions
-│   ├── twitter.ts             # Twitter client setup
-│   └── index.ts               # Entry point
-├── .env.example               # Environment template
-├── package.json               # Dependencies
-├── README.md                  # This file
-└── IMPROVEMENTS.md            # GAME best practices guide
+│   ├── agent.ts                    # Main agent configuration
+│   ├── index.ts                    # Entry point with rate limiting
+│   ├── knowledge.ts                # Silverback knowledge base
+│   ├── functions.ts                # DEX API functions
+│   ├── trading-functions.ts        # Trading execution functions
+│   ├── twitter-functions.ts        # Twitter API functions
+│   ├── twitter.ts                  # Twitter client setup
+│   ├── education-functions.ts      # DeFi education functions
+│   ├── market-data-functions.ts    # Live market data functions
+│   ├── types/
+│   │   └── agent-state.ts          # State type definitions
+│   ├── state/
+│   │   └── state-manager.ts        # SQLite state management
+│   ├── market-data/
+│   │   ├── types.ts                # Market data types
+│   │   ├── indicators.ts           # Technical indicators
+│   │   ├── patterns.ts             # Pattern recognition
+│   │   ├── fetcher.ts              # CoinGecko API integration
+│   │   └── backtest.ts             # Backtesting engine
+│   └── workers/
+│       ├── twitter-worker.ts       # Twitter engagement (ACTIVE)
+│       ├── trading-worker.ts       # Live trading (disabled)
+│       ├── paper-trading-worker.ts # Paper trading simulation
+│       ├── learning-worker.ts      # Performance analysis
+│       ├── market-analysis-worker.ts # Technical analysis
+│       ├── education-worker.ts     # Educational content
+│       └── analytics-worker.ts     # Reporting & metrics
+├── .env.example                    # Environment template
+├── package.json                    # Dependencies
+├── README.md                       # This file
+└── CURRENT_STATUS.md               # Detailed system status
 \`\`\`
 
 ## License
