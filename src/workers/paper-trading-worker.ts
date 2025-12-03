@@ -5,7 +5,7 @@
 
 import { GameWorker, GameFunction, ExecutableGameFunctionResponse, ExecutableGameFunctionStatus } from "@virtuals-protocol/game";
 import { stateManager } from '../state/state-manager';
-import { getSwapQuoteFunction } from '../trading-functions';
+import { getSwapQuoteFunction, analyzeTradeOpportunityFunction } from '../trading-functions';
 import { Trade } from '../types/agent-state';
 import {
     calculateAllIndicators,
@@ -303,25 +303,46 @@ export const paperTradingWorker = new GameWorker({
 
     This worker is for TESTING AND LEARNING ONLY - no real money is used.
 
-    Capabilities:
-    1. Simulate trades with realistic slippage and price impact from real DEX quotes
-    2. Record outcomes (win/loss) with full trade context
-    3. Track strategy performance over time (momentum vs mean_reversion)
-    4. Identify which strategies work in which market conditions
-    5. Build trading experience through hundreds of simulated trades
+    === CRITICAL: PRE-TRADE ANALYSIS ===
 
-    Use this worker to:
-    - Test the 'momentum' strategy (trend-following with EMA crossovers)
-    - Test the 'mean_reversion' strategy (buy dips, sell bounces)
-    - Learn which market conditions favor each strategy
-    - Build confidence through practice before live trading
-    - Achieve target 70% win rate through iterative learning
+    ALWAYS call 'analyze_trade_opportunity' BEFORE every trade!
+    This checks your historical performance and learned wisdom to recommend:
+    - GO: Strategy profitable in these conditions → proceed
+    - CAUTION: Mixed results → use smaller position
+    - AVOID: Poor historical performance → skip this trade
 
-    IMPORTANT: All trades are PRIVATE and recorded to database only. Never share trade details publicly.
+    The agent LEARNS from experience. Early trades build data.
+    After 50+ trades, the analysis becomes highly reliable.
 
-    Strategy Details:
+    === CAPABILITIES ===
+
+    1. Analyze trade opportunities using learned patterns (NEW!)
+    2. Simulate trades with realistic slippage and price impact
+    3. Record outcomes (win/loss) with full technical analysis context
+    4. Track strategy performance over time (momentum vs mean_reversion)
+    5. Identify which strategies work in which market conditions
+    6. Build trading experience through hundreds of simulated trades
+
+    === WORKFLOW ===
+
+    1. ANALYZE: Call analyze_trade_opportunity(strategy, market_condition, token_pair)
+    2. DECIDE: Check recommendation (GO/CAUTION/AVOID) and position_size
+    3. EXECUTE: If GO or CAUTION, call simulate_trade with appropriate size
+    4. LEARN: Trade outcome updates learned wisdom for future decisions
+
+    === STRATEGIES ===
+
     - Momentum: Works in trending markets (up/down), uses volume + EMA signals
-    - Mean Reversion: Works in ranging markets, uses RSI + Bollinger Bands + liquidity sweeps`,
+    - Mean Reversion: Works in ranging markets, uses RSI + Bollinger Bands
 
-    functions: [simulateTradeFunction]
+    === LEARNING EVOLUTION ===
+
+    - 0-50 trades: Building data, low confidence recommendations
+    - 50-100 trades: Patterns emerge, medium confidence
+    - 100+ trades: High confidence, agent knows what works
+    - Target: 70% win rate through systematic learning
+
+    IMPORTANT: All trades are PRIVATE and recorded to database only. Never share trade details publicly.`,
+
+    functions: [analyzeTradeOpportunityFunction, simulateTradeFunction]
 });
