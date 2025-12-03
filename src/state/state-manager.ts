@@ -5,16 +5,23 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { SilverbackState, Trade, TradingMetrics, StrategyPerformance } from '../types/agent-state';
 
 // Database file path (relative to project root)
-const DB_FILE = path.join(process.cwd(), 'data', 'silverback.db');
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DB_FILE = path.join(DATA_DIR, 'silverback.db');
 
 export class StateManager {
     private state: SilverbackState;
     private db: Database.Database;
 
     constructor() {
+        // Ensure data directory exists
+        if (!fs.existsSync(DATA_DIR)) {
+            fs.mkdirSync(DATA_DIR, { recursive: true });
+            console.log(`📁 Created data directory: ${DATA_DIR}`);
+        }
         this.db = new Database(DB_FILE);
         this.initializeDatabase();
         this.state = this.getDefaultState();
