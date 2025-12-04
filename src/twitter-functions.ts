@@ -16,13 +16,39 @@ const DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 hours
 const recentTopics: string[] = [];
 const MAX_RECENT_TOPICS = 5;
 
-// Clear old entries every hour to prevent memory bloat
+// BANNED PHRASES - these make tweets sound like a bot/marketing
+const BANNED_PHRASES = [
+    '#',  // No hashtags at all
+    'did you know',
+    'learn more',
+    'learn about',
+    'check out',
+    'discover how',
+    'find out',
+    'total tvl',
+    'tvl of $',
+    'ecosystem has a total',
+    'ecosystem metrics',
+    'top protocols like',
+    'top protocols include',
+    'leading the way',
+    'currently, the',
+    'non-inflationary tokenomics',
+    'benefits you',
+    'ensures no new supply',
+    'preventing dilution',
+    "silverback dex's approach",
+    "silverback dex's",
+    'notusinghash',
+    'not using hash',
+];
+
+// Clear old entries every hour
 setInterval(() => {
     if (repliedTweetIds.size > 1000) {
         const entries = Array.from(repliedTweetIds);
         entries.slice(0, entries.length - 500).forEach(id => repliedTweetIds.delete(id));
     }
-    // Clean up old tweet content tracking
     const cutoff = Date.now() - DUPLICATE_WINDOW_MS;
     while (recentTweetContent.length > 0 && recentTweetContent[0].timestamp < cutoff) {
         recentTweetContent.shift();
@@ -30,13 +56,33 @@ setInterval(() => {
 }, 3600000);
 
 /**
+ * Check for banned phrases that make tweets sound robotic
+ */
+function containsBannedPhrase(content: string): string | null {
+    const lower = content.toLowerCase();
+    for (const phrase of BANNED_PHRASES) {
+        if (lower.includes(phrase.toLowerCase())) {
+            return phrase;
+        }
+    }
+    return null;
+}
+
+/**
  * Detect the topic of a tweet
  */
 function detectTopic(content: string): string {
     const lower = content.toLowerCase();
 
-    if (lower.includes('tvl') || lower.includes('total value locked')) return 'tvl';
-    if (lower.includes('defi') && (lower.includes('metric') || lower.includes('ecosystem'))) return 'defi_metrics';
+    // Detect promotional/marketing content
+    if (lower.includes("silverback dex's") || lower.includes('silverback approach') ||
+        lower.includes('tokenomics') || lower.includes('learn about silverback')) return 'silverback_promo';
+
+    // Detect TVL/DeFi metrics (BLOCKED)
+    if (lower.includes('tvl') || lower.includes('total value locked')) return 'tvl_blocked';
+    if (lower.includes('defi') && (lower.includes('metric') || lower.includes('ecosystem') ||
+        lower.includes('$') && lower.includes('b'))) return 'defi_metrics_blocked';
+
     if (lower.includes('fear') && lower.includes('greed')) return 'fear_greed';
     if (lower.includes('btc') || lower.includes('bitcoin')) return 'btc';
     if (lower.includes('eth') || lower.includes('ethereum')) return 'eth';
@@ -44,50 +90,75 @@ function detectTopic(content: string): string {
     if (lower.includes('whale') || lower.includes('accumul')) return 'whales';
     if (lower.includes('base') && (lower.includes('chain') || lower.includes('l2'))) return 'base';
     if (lower.includes('aave') || lower.includes('uniswap') || lower.includes('lido')) return 'defi_protocols';
-    if (lower.includes('meme') || lower.includes('pepe') || lower.includes('doge')) return 'memecoins';
+    if (lower.includes('meme') || lower.includes('pepe') || lower.includes('doge') || lower.includes('shib')) return 'memecoins';
     if (lower.includes('sol') || lower.includes('solana')) return 'solana';
     if (lower.includes('yield') || lower.includes('apy') || lower.includes('apr')) return 'yields';
-    if (lower.includes('volume') && lower.includes('$')) return 'volume';
-    if (lower.includes('market cap')) return 'marketcap';
+    if (lower.includes('arb') || lower.includes('arbitrum') || lower.includes('optimism') || lower.includes(' op ')) return 'l2s';
+    if (lower.includes('ai ') || lower.includes('render') || lower.includes('fetch')) return 'ai_tokens';
 
     return 'general';
 }
 
 /**
- * Check if content is too similar to recent tweets
+ * Check if tweet should be blocked
  */
-function isSimilarToRecent(newContent: string): { similar: boolean; reason?: string } {
-    const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-    const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
+function shouldBlockTweet(newContent: string): { block: boolean; reason?: string } {
+    // Check for banned phrases first
+    const bannedPhrase = containsBannedPhrase(newContent);
+    if (bannedPhrase) {
+        return {
+            block: true,
+            reason: `BLOCKED: Contains "${bannedPhrase}". No hashtags, no marketing speak. Be natural - try a hot take, question, or observation.`
+        };
+    }
+
     const newTopic = detectTopic(newContent);
+
+    // Block promotional content
+    if (newTopic === 'silverback_promo') {
+        return {
+            block: true,
+            reason: `BLOCKED: Too promotional. Don't shill Silverback. Just share market insights or observations naturally.`
+        };
+    }
+
+    // Block TVL/DeFi metrics posts entirely - these are overdone
+    if (newTopic === 'tvl_blocked' || newTopic === 'defi_metrics_blocked') {
+        return {
+            block: true,
+            reason: `BLOCKED: No more TVL/DeFi metrics posts! Try something different: memecoins, L2 comparison, hot take, question, or building update.`
+        };
+    }
 
     // Check if same topic was posted recently
     if (recentTopics.includes(newTopic) && newTopic !== 'general') {
         return {
-            similar: true,
-            reason: `Already posted about "${newTopic}" recently. Pick a DIFFERENT topic: try altcoins, memecoins, L2s, yields, or a hot take instead.`
+            block: true,
+            reason: `BLOCKED: Already posted about "${newTopic}". Pick a DIFFERENT topic.`
         };
     }
+
+    // Check word similarity
+    const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+    const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
 
     for (const recent of recentTweetContent) {
         const normalizedRecent = recent.content.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
 
-        // Exact or near-exact match
         if (normalizedNew === normalizedRecent) {
-            return { similar: true, reason: "Exact duplicate of recent tweet" };
+            return { block: true, reason: "BLOCKED: Exact duplicate" };
         }
 
-        // Check word overlap (if >50% words match, it's too similar) - lowered from 70%
         const recentWords = new Set(normalizedRecent.split(/\s+/).filter(w => w.length > 3));
         const overlap = [...newWords].filter(w => recentWords.has(w)).length;
         const overlapRatio = overlap / Math.max(newWords.size, recentWords.size);
 
-        if (overlapRatio > 0.5) {
-            return { similar: true, reason: `Too similar to recent tweet (${Math.round(overlapRatio * 100)}% overlap). Create something completely different.` };
+        if (overlapRatio > 0.4) {
+            return { block: true, reason: `BLOCKED: ${Math.round(overlapRatio * 100)}% similar to recent tweet. Be more creative.` };
         }
     }
 
-    return { similar: false };
+    return { block: false };
 }
 
 /**
@@ -118,13 +189,13 @@ export const postTweetFunction = new GameFunction({
                 );
             }
 
-            // Check for duplicate/similar content
-            const similarCheck = isSimilarToRecent(args.content);
-            if (similarCheck.similar) {
-                logger(`Blocked: ${similarCheck.reason}`);
+            // Check for blocked content (banned phrases, duplicate topics, similarity)
+            const blockCheck = shouldBlockTweet(args.content);
+            if (blockCheck.block) {
+                logger(`Blocked: ${blockCheck.reason}`);
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Failed,
-                    `${similarCheck.reason}`
+                    blockCheck.reason || "Content blocked"
                 );
             }
 
