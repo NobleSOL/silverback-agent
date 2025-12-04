@@ -195,6 +195,193 @@ export const getVirtualsDataFunction = new GameFunction({
 });
 
 /**
+ * Get trending and top movers across crypto
+ */
+export const getTrendingCoinsFunction = new GameFunction({
+    name: "get_trending_coins",
+    description: `Get trending coins and top movers. Use this to find what's hot in the market for varied tweet content. Returns trending searches and top gainers/losers.`,
+    args: [] as const,
+    executable: async (args, logger) => {
+        try {
+            logger("Fetching trending coins...");
+
+            // Fetch trending searches
+            const trendingResponse = await fetch(
+                'https://api.coingecko.com/api/v3/search/trending'
+            );
+
+            if (!trendingResponse.ok) {
+                throw new Error(`CoinGecko trending API error: ${trendingResponse.status}`);
+            }
+
+            const trendingData = await trendingResponse.json();
+
+            // Extract trending coins
+            const trendingCoins = trendingData.coins?.slice(0, 7).map((item: any) => ({
+                name: item.item?.name,
+                symbol: item.item?.symbol?.toUpperCase(),
+                rank: item.item?.market_cap_rank,
+                priceChange24h: item.item?.data?.price_change_percentage_24h?.usd?.toFixed(2) || 'N/A'
+            })) || [];
+
+            const result = {
+                trending: trendingCoins,
+                categories: ["memecoins", "ai-tokens", "layer-2", "defi"],
+                timestamp: new Date().toISOString(),
+                tip: "Use these trending coins for varied tweet content"
+            };
+
+            logger(`Found ${trendingCoins.length} trending coins`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify(result)
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch trending coins: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get altcoin data for diverse content
+ */
+export const getAltcoinDataFunction = new GameFunction({
+    name: "get_altcoin_data",
+    description: `Get data on major altcoins (SOL, AVAX, MATIC, LINK, etc.) for varied tweet content. Use this to discuss assets beyond BTC/ETH.`,
+    args: [
+        {
+            name: "category",
+            description: "Category: 'l2' (Layer 2s), 'defi' (DeFi tokens), 'ai' (AI tokens), 'meme' (Memecoins), or 'all'"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            const category = args.category?.toLowerCase() || 'all';
+            logger(`Fetching ${category} altcoin data...`);
+
+            // Token IDs by category
+            const tokensByCategory: Record<string, string[]> = {
+                l2: ['matic-network', 'arbitrum', 'optimism', 'immutable-x', 'metis-token'],
+                defi: ['uniswap', 'aave', 'chainlink', 'maker', 'lido-dao', 'curve-dao-token'],
+                ai: ['render-token', 'fetch-ai', 'singularitynet', 'akash-network', 'bittensor'],
+                meme: ['dogecoin', 'shiba-inu', 'pepe', 'bonk', 'dogwifcoin', 'floki'],
+                major: ['solana', 'cardano', 'avalanche-2', 'polkadot', 'near']
+            };
+
+            // Get tokens based on category
+            let tokenIds: string[];
+            if (category === 'all') {
+                tokenIds = [...tokensByCategory.l2.slice(0, 2), ...tokensByCategory.defi.slice(0, 2), ...tokensByCategory.ai.slice(0, 2), ...tokensByCategory.meme.slice(0, 2)];
+            } else {
+                tokenIds = tokensByCategory[category] || tokensByCategory.major;
+            }
+
+            const response = await fetch(
+                `https://api.coingecko.com/api/v3/simple/price?ids=${tokenIds.join(',')}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true`
+            );
+
+            if (!response.ok) {
+                throw new Error(`CoinGecko API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            const tokens = Object.entries(data).map(([id, values]: [string, any]) => ({
+                id,
+                price: values.usd,
+                change24h: values.usd_24h_change?.toFixed(2) || '0',
+                marketCap: formatLargeNumber(values.usd_market_cap || 0)
+            })).sort((a, b) => parseFloat(b.change24h) - parseFloat(a.change24h));
+
+            const result = {
+                category,
+                tokens,
+                topGainer: tokens[0],
+                topLoser: tokens[tokens.length - 1],
+                timestamp: new Date().toISOString()
+            };
+
+            logger(`Fetched ${tokens.length} ${category} tokens`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify(result)
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch altcoin data: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Fear & Greed Index for market sentiment
+ */
+export const getFearGreedIndexFunction = new GameFunction({
+    name: "get_fear_greed_index",
+    description: `Get the Crypto Fear & Greed Index for market sentiment analysis. Use this to add sentiment context to your market tweets.`,
+    args: [] as const,
+    executable: async (args, logger) => {
+        try {
+            logger("Fetching Fear & Greed Index...");
+
+            const response = await fetch('https://api.alternative.me/fng/?limit=7');
+
+            if (!response.ok) {
+                throw new Error(`Fear & Greed API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const current = data.data?.[0];
+            const weekAgo = data.data?.[6];
+
+            const result = {
+                current: {
+                    value: parseInt(current?.value || '50'),
+                    classification: current?.value_classification || 'Neutral',
+                    timestamp: current?.timestamp
+                },
+                weekAgo: {
+                    value: parseInt(weekAgo?.value || '50'),
+                    classification: weekAgo?.value_classification || 'Neutral'
+                },
+                trend: parseInt(current?.value || '50') > parseInt(weekAgo?.value || '50') ? 'improving' : 'declining',
+                interpretation: getInterpretation(parseInt(current?.value || '50'))
+            };
+
+            logger(`Fear & Greed: ${result.current.value} (${result.current.classification})`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify(result)
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch Fear & Greed Index: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Helper function to interpret Fear & Greed value
+ */
+function getInterpretation(value: number): string {
+    if (value <= 25) return "Extreme fear - historically good buying opportunity";
+    if (value <= 45) return "Fear - market cautious, potential opportunity";
+    if (value <= 55) return "Neutral - market undecided";
+    if (value <= 75) return "Greed - market optimistic, watch for overextension";
+    return "Extreme greed - historically time for caution";
+}
+
+/**
  * Helper function to format large numbers
  */
 function formatLargeNumber(num: number): string {
