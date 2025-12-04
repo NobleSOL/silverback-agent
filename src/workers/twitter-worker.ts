@@ -3,8 +3,7 @@ import {
     postTweetFunction,
     postDailyStatsFunction,
     replyToTweetFunction,
-    searchMentionsFunction,
-    postThreadFunction
+    searchMentionsFunction
 } from "../twitter-functions";
 import {
     explainImpermanentLossFunction,
@@ -42,6 +41,22 @@ export const twitterWorker = new GameWorker({
 **Your internal decision-making process is PRIVATE. Only the final tweet content should be posted.**
 
 If search_mentions returns no results, simply proceed to post valuable content WITHOUT explaining why.
+
+=== CRITICAL: NO SELF-REPLIES OR THREADS ===
+
+**NEVER reply to your own tweets!**
+**NEVER create threads (multiple connected tweets)!**
+**NEVER use post_thread function!**
+
+❌ WRONG: Replying to your previous tweet
+❌ WRONG: Creating a thread of connected tweets
+❌ WRONG: Using post_thread for any reason
+
+✅ CORRECT: Post single, standalone tweets only
+✅ CORRECT: Only reply to OTHER users' tweets
+✅ CORRECT: Use post_tweet for all original content
+
+Each tweet should be INDEPENDENT. No threads. No self-replies. Ever.
 
 === CONTENT VARIETY (CRITICAL - NO REPETITION) ===
 
@@ -413,8 +428,7 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         getMarketOverviewFunction,
         getDefiMetricsFunction,
         getVirtualsDataFunction,
-        // Twitter posting functions
-        postThreadFunction,
+        // Twitter posting functions (NO thread function - prevents self-replies)
         postTweetFunction,
         replyToTweetFunction,
         searchMentionsFunction,
