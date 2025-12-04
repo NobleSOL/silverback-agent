@@ -9,10 +9,14 @@ import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./
 const repliedTweetIds = new Set<string>();
 
 // Track recent tweet content to prevent duplicate posts
-const recentTweetContent: { content: string; timestamp: number }[] = [];
-const DUPLICATE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+const recentTweetContent: { content: string; timestamp: number; topic: string }[] = [];
+const DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-// Clear old entries every hour to prevent memory bloat (keep last 1000)
+// Track recent topics to force variety
+const recentTopics: string[] = [];
+const MAX_RECENT_TOPICS = 5;
+
+// Clear old entries every hour to prevent memory bloat
 setInterval(() => {
     if (repliedTweetIds.size > 1000) {
         const entries = Array.from(repliedTweetIds);
@@ -26,11 +30,44 @@ setInterval(() => {
 }, 3600000);
 
 /**
+ * Detect the topic of a tweet
+ */
+function detectTopic(content: string): string {
+    const lower = content.toLowerCase();
+
+    if (lower.includes('tvl') || lower.includes('total value locked')) return 'tvl';
+    if (lower.includes('defi') && (lower.includes('metric') || lower.includes('ecosystem'))) return 'defi_metrics';
+    if (lower.includes('fear') && lower.includes('greed')) return 'fear_greed';
+    if (lower.includes('btc') || lower.includes('bitcoin')) return 'btc';
+    if (lower.includes('eth') || lower.includes('ethereum')) return 'eth';
+    if (lower.includes('dominance')) return 'dominance';
+    if (lower.includes('whale') || lower.includes('accumul')) return 'whales';
+    if (lower.includes('base') && (lower.includes('chain') || lower.includes('l2'))) return 'base';
+    if (lower.includes('aave') || lower.includes('uniswap') || lower.includes('lido')) return 'defi_protocols';
+    if (lower.includes('meme') || lower.includes('pepe') || lower.includes('doge')) return 'memecoins';
+    if (lower.includes('sol') || lower.includes('solana')) return 'solana';
+    if (lower.includes('yield') || lower.includes('apy') || lower.includes('apr')) return 'yields';
+    if (lower.includes('volume') && lower.includes('$')) return 'volume';
+    if (lower.includes('market cap')) return 'marketcap';
+
+    return 'general';
+}
+
+/**
  * Check if content is too similar to recent tweets
  */
 function isSimilarToRecent(newContent: string): { similar: boolean; reason?: string } {
     const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
     const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
+    const newTopic = detectTopic(newContent);
+
+    // Check if same topic was posted recently
+    if (recentTopics.includes(newTopic) && newTopic !== 'general') {
+        return {
+            similar: true,
+            reason: `Already posted about "${newTopic}" recently. Pick a DIFFERENT topic: try altcoins, memecoins, L2s, yields, or a hot take instead.`
+        };
+    }
 
     for (const recent of recentTweetContent) {
         const normalizedRecent = recent.content.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
@@ -40,13 +77,13 @@ function isSimilarToRecent(newContent: string): { similar: boolean; reason?: str
             return { similar: true, reason: "Exact duplicate of recent tweet" };
         }
 
-        // Check word overlap (if >70% words match, it's too similar)
+        // Check word overlap (if >50% words match, it's too similar) - lowered from 70%
         const recentWords = new Set(normalizedRecent.split(/\s+/).filter(w => w.length > 3));
         const overlap = [...newWords].filter(w => recentWords.has(w)).length;
         const overlapRatio = overlap / Math.max(newWords.size, recentWords.size);
 
-        if (overlapRatio > 0.7) {
-            return { similar: true, reason: `Too similar to recent tweet (${Math.round(overlapRatio * 100)}% overlap)` };
+        if (overlapRatio > 0.5) {
+            return { similar: true, reason: `Too similar to recent tweet (${Math.round(overlapRatio * 100)}% overlap). Create something completely different.` };
         }
     }
 
@@ -58,11 +95,11 @@ function isSimilarToRecent(newContent: string): { similar: boolean; reason?: str
  */
 export const postTweetFunction = new GameFunction({
     name: "post_tweet",
-    description: "Post a tweet about Silverback DEX. Use this to share insights, market updates, trading tips, or engage with the community. Keep tweets informative and engaging. AVOID using hashtags - they don't help with reach anymore and look spammy.",
+    description: "Post a tweet. IMPORTANT: You MUST vary your content! Do NOT post about the same topic twice. If you posted about DeFi/TVL, next post about something completely different like memecoins, yields, L2s, or a hot take. AVOID hashtags.",
     args: [
         {
             name: "content",
-            description: "The tweet content (max 280 characters). Should be informative about DeFi, Silverback DEX, or market insights."
+            description: "Tweet content (max 280 chars). MUST be different topic from recent posts. If blocked for similarity, try: altcoins, memecoins, yields, L2 comparison, market observation, or building update."
         }
     ] as const,
     executable: async (args, logger) => {
@@ -84,18 +121,27 @@ export const postTweetFunction = new GameFunction({
             // Check for duplicate/similar content
             const similarCheck = isSimilarToRecent(args.content);
             if (similarCheck.similar) {
-                logger(`Blocked duplicate tweet: ${similarCheck.reason}`);
+                logger(`Blocked: ${similarCheck.reason}`);
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Failed,
-                    `${similarCheck.reason}. Please create different content - vary the topic, assets, or angle.`
+                    `${similarCheck.reason}`
                 );
             }
 
-            logger(`Posting tweet: "${args.content}"`);
+            // Detect and track topic
+            const topic = detectTopic(args.content);
+
+            logger(`Posting tweet (topic: ${topic}): "${args.content}"`);
             const result = await twitterClient.v2.tweet(args.content);
 
             // Track this tweet to prevent duplicates
-            recentTweetContent.push({ content: args.content, timestamp: Date.now() });
+            recentTweetContent.push({ content: args.content, timestamp: Date.now(), topic });
+
+            // Track topic for variety enforcement
+            recentTopics.push(topic);
+            if (recentTopics.length > MAX_RECENT_TOPICS) {
+                recentTopics.shift();
+            }
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -103,6 +149,7 @@ export const postTweetFunction = new GameFunction({
                     success: true,
                     tweetId: result.data.id,
                     text: args.content,
+                    topic: topic,
                     url: `https://x.com/user/status/${result.data.id}`
                 })
             );
