@@ -13,7 +13,10 @@ import {
 import {
     getMarketOverviewFunction,
     getDefiMetricsFunction,
-    getVirtualsDataFunction
+    getVirtualsDataFunction,
+    getTrendingCoinsFunction,
+    getAltcoinDataFunction,
+    getFearGreedIndexFunction
 } from "../market-data-functions";
 
 /**
@@ -500,6 +503,9 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         getMarketOverviewFunction,
         getDefiMetricsFunction,
         getVirtualsDataFunction,
+        getTrendingCoinsFunction,      // NEW: Get trending coins for varied content
+        getAltcoinDataFunction,        // NEW: Get L2, DeFi, AI, meme coin data
+        getFearGreedIndexFunction,     // NEW: Market sentiment indicator
         // Twitter posting functions (NO thread function - prevents self-replies)
         postTweetFunction,
         replyToTweetFunction,
