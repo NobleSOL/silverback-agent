@@ -8,13 +8,50 @@ import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./
 // Track tweets we've already replied to (prevents duplicate replies)
 const repliedTweetIds = new Set<string>();
 
+// Track recent tweet content to prevent duplicate posts
+const recentTweetContent: { content: string; timestamp: number }[] = [];
+const DUPLICATE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+
 // Clear old entries every hour to prevent memory bloat (keep last 1000)
 setInterval(() => {
     if (repliedTweetIds.size > 1000) {
         const entries = Array.from(repliedTweetIds);
         entries.slice(0, entries.length - 500).forEach(id => repliedTweetIds.delete(id));
     }
+    // Clean up old tweet content tracking
+    const cutoff = Date.now() - DUPLICATE_WINDOW_MS;
+    while (recentTweetContent.length > 0 && recentTweetContent[0].timestamp < cutoff) {
+        recentTweetContent.shift();
+    }
 }, 3600000);
+
+/**
+ * Check if content is too similar to recent tweets
+ */
+function isSimilarToRecent(newContent: string): { similar: boolean; reason?: string } {
+    const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+    const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
+
+    for (const recent of recentTweetContent) {
+        const normalizedRecent = recent.content.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+
+        // Exact or near-exact match
+        if (normalizedNew === normalizedRecent) {
+            return { similar: true, reason: "Exact duplicate of recent tweet" };
+        }
+
+        // Check word overlap (if >70% words match, it's too similar)
+        const recentWords = new Set(normalizedRecent.split(/\s+/).filter(w => w.length > 3));
+        const overlap = [...newWords].filter(w => recentWords.has(w)).length;
+        const overlapRatio = overlap / Math.max(newWords.size, recentWords.size);
+
+        if (overlapRatio > 0.7) {
+            return { similar: true, reason: `Too similar to recent tweet (${Math.round(overlapRatio * 100)}% overlap)` };
+        }
+    }
+
+    return { similar: false };
+}
 
 /**
  * Post a tweet with DEX updates or insights
@@ -44,8 +81,21 @@ export const postTweetFunction = new GameFunction({
                 );
             }
 
+            // Check for duplicate/similar content
+            const similarCheck = isSimilarToRecent(args.content);
+            if (similarCheck.similar) {
+                logger(`Blocked duplicate tweet: ${similarCheck.reason}`);
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `${similarCheck.reason}. Please create different content - vary the topic, assets, or angle.`
+                );
+            }
+
             logger(`Posting tweet: "${args.content}"`);
             const result = await twitterClient.v2.tweet(args.content);
+
+            // Track this tweet to prevent duplicates
+            recentTweetContent.push({ content: args.content, timestamp: Date.now() });
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
