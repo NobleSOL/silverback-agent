@@ -5,6 +5,17 @@ import {
 } from "@virtuals-protocol/game";
 import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./twitter";
 
+// Track tweets we've already replied to (prevents duplicate replies)
+const repliedTweetIds = new Set<string>();
+
+// Clear old entries every hour to prevent memory bloat (keep last 1000)
+setInterval(() => {
+    if (repliedTweetIds.size > 1000) {
+        const entries = Array.from(repliedTweetIds);
+        entries.slice(0, entries.length - 500).forEach(id => repliedTweetIds.delete(id));
+    }
+}, 3600000);
+
 /**
  * Post a tweet with DEX updates or insights
  */
@@ -124,6 +135,15 @@ export const replyToTweetFunction = new GameFunction({
             const tweetId = args.tweetId;
             const content = args.content;
 
+            // Check if we've already replied to this tweet
+            if (repliedTweetIds.has(tweetId)) {
+                logger(`Blocked duplicate reply to tweet ${tweetId} - already replied`);
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    "Already replied to this tweet. Find a different tweet to engage with."
+                );
+            }
+
             // Check if this is our own tweet - don't reply to ourselves
             try {
                 const tweet = await twitterClient.v2.singleTweet(tweetId, { 'tweet.fields': ['author_id'] });
@@ -142,6 +162,9 @@ export const replyToTweetFunction = new GameFunction({
 
             logger(`Replying to tweet ${tweetId}: "${content}"`);
             const result = await twitterClient.v2.reply(content, tweetId);
+
+            // Track this reply to prevent duplicates
+            repliedTweetIds.add(tweetId);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
