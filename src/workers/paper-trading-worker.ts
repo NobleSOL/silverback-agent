@@ -6,7 +6,7 @@
 import { GameWorker, GameFunction, ExecutableGameFunctionResponse, ExecutableGameFunctionStatus } from "@virtuals-protocol/game";
 import { stateManager } from '../state/state-manager';
 import { getSwapQuoteFunction, analyzeTradeOpportunityFunction } from '../trading-functions';
-import { Trade } from '../types/agent-state';
+import { Trade, TokenMetricsSignal } from '../types/agent-state';
 import {
     calculateAllIndicators,
     generateMomentumSignal,
@@ -14,6 +14,69 @@ import {
     analyzeMarketConditions
 } from '../market-data/indicators';
 import { OHLCV } from '../market-data/types';
+import {
+    getAITradingSignalsFunction,
+    getTokenGradesFunction,
+    getResistanceSupportFunction,
+    getPricePredictionsFunction,
+    isTokenMetricsAvailable,
+    getApiUsageStats
+} from '../plugins/token-metrics';
+
+// Token symbol mapping for common addresses
+const TOKEN_SYMBOLS: Record<string, string> = {
+    '0x4200000000000000000000000000000000000006': 'WETH',
+    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
+    // Add more as needed
+};
+
+/**
+ * Get TM signal for a trade (uses cache if available)
+ */
+async function getTMSignalForTrade(tokenAddress: string, logger: (msg: string) => void): Promise<TokenMetricsSignal | null> {
+    if (!isTokenMetricsAvailable()) {
+        return null;
+    }
+
+    // Map address to symbol (default to unknown)
+    const symbol = TOKEN_SYMBOLS[tokenAddress.toLowerCase()] || 'BTC';
+
+    try {
+        // First try to get trading signals
+        const signalsResult = await getAITradingSignalsFunction.executable({ symbol }, logger);
+        if (signalsResult.status === ExecutableGameFunctionStatus.Done) {
+            const data = JSON.parse(signalsResult.feedback);
+            if (data.signals && data.signals.length > 0) {
+                const signal = data.signals[0];
+                return {
+                    signal: signal.signal === 'LONG' || signal.signal === 'BUY' ? 'LONG' :
+                           signal.signal === 'SHORT' || signal.signal === 'SELL' ? 'SHORT' : 'HOLD',
+                    confidence: signal.confidence || 50,
+                    traderGrade: signal.grade || 50,
+                    aligned: false // Will be set based on trade direction
+                };
+            }
+        }
+
+        // Fallback: try to get grades
+        const gradesResult = await getTokenGradesFunction.executable({ symbol }, logger);
+        if (gradesResult.status === ExecutableGameFunctionStatus.Done) {
+            const data = JSON.parse(gradesResult.feedback);
+            if (data.traderGrade) {
+                return {
+                    signal: data.traderGrade >= 60 ? 'LONG' : data.traderGrade <= 40 ? 'SHORT' : 'HOLD',
+                    confidence: data.traderGrade || 50,
+                    traderGrade: data.traderGrade || 50,
+                    aligned: false
+                };
+            }
+        }
+    } catch (e) {
+        logger(`⚠️  Could not fetch TM signal: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+
+    return null;
+}
 
 /**
  * Simulate a paper trade - execute fake trade and record results for learning
@@ -102,6 +165,30 @@ export const simulateTradeFunction = new GameFunction({
             logger(`   Expected out: ${quote.amountOut}`);
             logger(`   Price impact: ${quote.priceImpact}`);
             logger(`   Liquidity fee: ${quote.fee}${useSimulatedQuote ? ' (simulated)' : ''}`);
+
+            // Fetch Token Metrics signal for comparison (if available)
+            logger(`\n🤖 Checking Token Metrics AI signal...`);
+            let tmSignal: TokenMetricsSignal | null = null;
+            const tmUsage = getApiUsageStats();
+
+            if (tmUsage.remaining > 0) {
+                tmSignal = await getTMSignalForTrade(args.tokenOut, logger);
+                if (tmSignal) {
+                    // For momentum strategy, we're going LONG (buying)
+                    // For mean reversion, depends on the setup
+                    const tradeDirection = args.strategy === 'momentum' ? 'LONG' : 'LONG';
+                    tmSignal.aligned = tmSignal.signal === tradeDirection || tmSignal.signal === 'HOLD';
+
+                    logger(`   TM Signal: ${tmSignal.signal}`);
+                    logger(`   TM Confidence: ${tmSignal.confidence}`);
+                    logger(`   TM Trader Grade: ${tmSignal.traderGrade}`);
+                    logger(`   Aligned with trade: ${tmSignal.aligned ? '✅ YES' : '❌ NO'}`);
+                } else {
+                    logger(`   No TM signal available (using internal analysis only)`);
+                }
+            } else {
+                logger(`   TM API limit reached (${tmUsage.callsToday}/${tmUsage.dailyLimit}), skipping signal check`);
+            }
 
             // Simulate execution with realistic slippage
             const baseSlippage = Math.random() * 0.5; // Random 0-0.5% slippage
@@ -211,7 +298,29 @@ export const simulateTradeFunction = new GameFunction({
             logger(`\n📈 Trade result: ${outcome.toUpperCase()}`);
             logger(`   PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`);
 
-            // Record the trade with technical analysis insights
+            // Build lessons array including TM signal alignment analysis
+            const lessonsArray = [
+                args.reasoning,
+                `Technical Analysis: ${args.strategy === 'momentum' ? 'Momentum' : 'Mean Reversion'} signal = ${signal}/100`,
+                `Indicators: EMA ${indicators.ema9 > indicators.ema21 ? 'bullish' : 'bearish'}, RSI ${indicators.rsi.toFixed(0)}, Trend ${conditions.trend}`,
+                outcome === 'win'
+                    ? `✅ WIN: Strong ${signal >= 60 ? 'technical setup' : 'lucky'} - ${conditions.trend} trend, ${conditions.volatility} volatility`
+                    : `❌ LOSS: ${signal < 55 ? 'Weak signal' : 'Market unpredictability'} - Review indicators before similar setups`
+            ];
+
+            // Add TM signal lesson if available
+            if (tmSignal) {
+                const tmLesson = tmSignal.aligned
+                    ? outcome === 'win'
+                        ? `🤖 TM ALIGNED ✅ WIN: Following TM ${tmSignal.signal} signal (grade: ${tmSignal.traderGrade}) was correct!`
+                        : `🤖 TM ALIGNED ❌ LOSS: TM signal was ${tmSignal.signal} but market moved against us`
+                    : outcome === 'win'
+                        ? `🤖 TM DIVERGED ✅ WIN: Traded against TM ${tmSignal.signal} signal and won - market timing beat AI`
+                        : `🤖 TM DIVERGED ❌ LOSS: Ignored TM ${tmSignal.signal} signal (grade: ${tmSignal.traderGrade}) - should have followed?`;
+                lessonsArray.push(tmLesson);
+            }
+
+            // Record the trade with technical analysis insights and TM signal
             const trade: Trade = {
                 id: Date.now().toString(),
                 timestamp: new Date().toISOString(),
@@ -230,14 +339,8 @@ export const simulateTradeFunction = new GameFunction({
                     liquidityRating: quote.chain || 'GOOD',
                     trend: conditions.trend
                 },
-                lessons: [
-                    args.reasoning,
-                    `Technical Analysis: ${args.strategy === 'momentum' ? 'Momentum' : 'Mean Reversion'} signal = ${signal}/100`,
-                    `Indicators: EMA ${indicators.ema9 > indicators.ema21 ? 'bullish' : 'bearish'}, RSI ${indicators.rsi.toFixed(0)}, Trend ${conditions.trend}`,
-                    outcome === 'win'
-                        ? `✅ WIN: Strong ${signal >= 60 ? 'technical setup' : 'lucky'} - ${conditions.trend} trend, ${conditions.volatility} volatility`
-                        : `❌ LOSS: ${signal < 55 ? 'Weak signal' : 'Market unpredictability'} - Review indicators before similar setups`
-                ]
+                lessons: lessonsArray,
+                tmSignal: tmSignal || undefined
             };
 
             logger(`\n💾 Recording trade to database...`);
@@ -257,6 +360,35 @@ export const simulateTradeFunction = new GameFunction({
             logger(`   Win Rate: ${((updatedStrategy?.winRate || 0) * 100).toFixed(1)}%`);
             logger(`   PnL: $${(updatedStrategy?.totalPnL || 0).toFixed(2)}`);
 
+            // Calculate TM signal accuracy from recent trades
+            const tradesWithTM = updatedState.recentTrades.filter(t => t.tmSignal);
+            const tmAlignedTrades = tradesWithTM.filter(t => t.tmSignal?.aligned);
+            const tmAlignedWins = tmAlignedTrades.filter(t => t.outcome === 'win').length;
+            const tmNonAlignedTrades = tradesWithTM.filter(t => !t.tmSignal?.aligned);
+            const tmNonAlignedWins = tmNonAlignedTrades.filter(t => t.outcome === 'win').length;
+
+            const tmAccuracy = tradesWithTM.length > 0 ? {
+                tradesWithSignal: tradesWithTM.length,
+                alignedTrades: tmAlignedTrades.length,
+                alignedWinRate: tmAlignedTrades.length > 0
+                    ? ((tmAlignedWins / tmAlignedTrades.length) * 100).toFixed(1) + '%'
+                    : 'N/A',
+                nonAlignedWinRate: tmNonAlignedTrades.length > 0
+                    ? ((tmNonAlignedWins / tmNonAlignedTrades.length) * 100).toFixed(1) + '%'
+                    : 'N/A',
+                recommendation: tmAlignedTrades.length >= 5 && tmAlignedWins / tmAlignedTrades.length > 0.6
+                    ? 'Following TM signals is working well!'
+                    : 'Need more data to evaluate TM signal accuracy'
+            } : null;
+
+            if (tmAccuracy) {
+                logger(`\n🤖 Token Metrics Signal Accuracy:`);
+                logger(`   Trades with TM signal: ${tmAccuracy.tradesWithSignal}`);
+                logger(`   Aligned with TM: ${tmAccuracy.alignedTrades}`);
+                logger(`   Aligned win rate: ${tmAccuracy.alignedWinRate}`);
+                logger(`   Non-aligned win rate: ${tmAccuracy.nonAlignedWinRate}`);
+            }
+
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
                 JSON.stringify({
@@ -266,7 +398,8 @@ export const simulateTradeFunction = new GameFunction({
                         strategy: trade.strategy,
                         outcome: trade.outcome,
                         pnl: pnl.toFixed(2),
-                        slippage: totalSlippage.toFixed(2) + '%'
+                        slippage: totalSlippage.toFixed(2) + '%',
+                        tmSignalAligned: tmSignal?.aligned ?? 'no_signal'
                     },
                     currentMetrics: {
                         totalTrades: updatedState.metrics.totalTrades,
@@ -278,7 +411,8 @@ export const simulateTradeFunction = new GameFunction({
                         trades: updatedStrategy?.trades,
                         winRate: ((updatedStrategy?.winRate || 0) * 100).toFixed(1) + '%',
                         pnl: '$' + (updatedStrategy?.totalPnL || 0).toFixed(2)
-                    }
+                    },
+                    tmSignalAccuracy: tmAccuracy
                 }, null, 2)
             );
 
@@ -303,46 +437,56 @@ export const paperTradingWorker = new GameWorker({
 
     This worker is for TESTING AND LEARNING ONLY - no real money is used.
 
+    === TOKEN METRICS INTEGRATION ===
+
+    You have access to Token Metrics AI signals (if API key configured).
+    Use these BEFORE making trade decisions for better accuracy:
+    - get_ai_trading_signals: Get AI buy/sell/hold recommendations
+    - get_token_grades: Get technology and fundamental grades for tokens
+    - get_resistance_support: Get key price levels for entries/exits
+
+    IMPORTANT: Token Metrics has ~16 calls/day limit (500/month free tier).
+    Results are cached for 4 hours. Use strategically!
+
     === CRITICAL: PRE-TRADE ANALYSIS ===
 
-    ALWAYS call 'analyze_trade_opportunity' BEFORE every trade!
-    This checks your historical performance and learned wisdom to recommend:
-    - GO: Strategy profitable in these conditions → proceed
-    - CAUTION: Mixed results → use smaller position
-    - AVOID: Poor historical performance → skip this trade
+    WORKFLOW FOR EACH TRADE:
+    1. Check Token Metrics signals first (get_ai_trading_signals)
+    2. Call analyze_trade_opportunity to check your historical performance
+    3. If both signals align → higher confidence trade
+    4. Execute simulate_trade and record the outcome
+    5. Learn from results
 
-    The agent LEARNS from experience. Early trades build data.
-    After 50+ trades, the analysis becomes highly reliable.
+    === RECOMMENDATION LEVELS ===
 
-    === CAPABILITIES ===
-
-    1. Analyze trade opportunities using learned patterns (NEW!)
-    2. Simulate trades with realistic slippage and price impact
-    3. Record outcomes (win/loss) with full technical analysis context
-    4. Track strategy performance over time (momentum vs mean_reversion)
-    5. Identify which strategies work in which market conditions
-    6. Build trading experience through hundreds of simulated trades
-
-    === WORKFLOW ===
-
-    1. ANALYZE: Call analyze_trade_opportunity(strategy, market_condition, token_pair)
-    2. DECIDE: Check recommendation (GO/CAUTION/AVOID) and position_size
-    3. EXECUTE: If GO or CAUTION, call simulate_trade with appropriate size
-    4. LEARN: Trade outcome updates learned wisdom for future decisions
+    - GO: Token Metrics + your analysis both bullish → proceed
+    - CAUTION: Signals mixed → smaller position or skip
+    - AVOID: Both signals bearish → don't trade
 
     === STRATEGIES ===
 
-    - Momentum: Works in trending markets (up/down), uses volume + EMA signals
-    - Mean Reversion: Works in ranging markets, uses RSI + Bollinger Bands
+    - Momentum: Works in trending markets, use with Token Metrics BUY signals
+    - Mean Reversion: Works in ranging markets, use when RSI extreme
 
     === LEARNING EVOLUTION ===
 
-    - 0-50 trades: Building data, low confidence recommendations
-    - 50-100 trades: Patterns emerge, medium confidence
-    - 100+ trades: High confidence, agent knows what works
+    - 0-50 trades: Building data, rely more on Token Metrics signals
+    - 50-100 trades: Your patterns emerge, blend both data sources
+    - 100+ trades: High confidence, you know what works
     - Target: 70% win rate through systematic learning
 
     IMPORTANT: All trades are PRIVATE and recorded to database only. Never share trade details publicly.`,
 
-    functions: [analyzeTradeOpportunityFunction, simulateTradeFunction]
+    functions: [
+        // Token Metrics AI signals (use first for 70% win rate!)
+        ...(isTokenMetricsAvailable() ? [
+            getAITradingSignalsFunction,      // LONG/SHORT signals
+            getTokenGradesFunction,           // Trader/Investor grades (0-100)
+            getResistanceSupportFunction,     // Entry/exit price levels
+            getPricePredictionsFunction       // AI price targets
+        ] : []),
+        // Your analysis and execution
+        analyzeTradeOpportunityFunction,
+        simulateTradeFunction
+    ]
 });

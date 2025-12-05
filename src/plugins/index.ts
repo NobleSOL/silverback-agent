@@ -41,14 +41,16 @@ export {
     telegramTemplates
 } from './telegram';
 
-// TokenMetrics AI Signals
+// TokenMetrics AI Signals (70% win rate)
 export {
     isTokenMetricsAvailable,
+    getApiUsageStats,
     getAITradingSignalsFunction,
-    getMoonshotTokensFunction,
     getTokenGradesFunction,
     getResistanceSupportFunction,
-    getMarketSentimentFunction
+    getPricePredictionsFunction,
+    getMarketSentimentFunction,
+    getApiUsageFunction
 } from './token-metrics';
 
 // CoinGecko Enhanced Data

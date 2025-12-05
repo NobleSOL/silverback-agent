@@ -22,6 +22,12 @@ import {
     getTrendingCoinsFunction,
     getFearGreedIndexFunction
 } from "../market-data-functions";
+import {
+    isTokenMetricsAvailable,
+    getAITradingSignalsFunction,
+    getTokenGradesFunction,
+    getMarketSentimentFunction
+} from "../plugins/token-metrics";
 
 /**
  * Analyze market conditions and determine if a signal should be sent
@@ -103,6 +109,7 @@ export const sendTradeCallFunction = new GameFunction({
     - Direction: LONG (expecting price up) or SHORT (expecting price down)
     - Timeframe: How long you expect the trade to take
     - Entry, Target, Stop prices
+    - TM Signal alignment (if you checked Token Metrics)
 
     ONLY send when confidence is high based on your learning!`,
     args: [
@@ -133,6 +140,10 @@ export const sendTradeCallFunction = new GameFunction({
         {
             name: "notes",
             description: "Brief analysis or reason for the trade (optional)"
+        },
+        {
+            name: "tm_aligned",
+            description: "Token Metrics alignment: 'yes' if TM agrees, 'no' if TM disagrees, 'unchecked' if not verified (optional)"
         }
     ] as const,
     executable: async (args, logger) => {
@@ -146,26 +157,44 @@ export const sendTradeCallFunction = new GameFunction({
         try {
             const state = stateManager.getState();
 
-            // Log learning status but allow signals regardless
-            // The agent's confidence level will reflect its experience
-            const learningNote = state.metrics.totalTrades < 10
-                ? '⚠️ Early learning phase'
-                : state.metrics.totalTrades < 50
-                ? '📈 Building experience'
-                : '✅ Experienced';
+            // Only send trade calls once we've achieved target win rate
+            const MIN_TRADES = 50;
+            const MIN_WIN_RATE = 0.70;
+
+            if (state.metrics.totalTrades < MIN_TRADES) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `Still learning: ${state.metrics.totalTrades}/${MIN_TRADES} trades completed. Need more paper trading experience before sending signals.`
+                );
+            }
+
+            if (state.metrics.winRate < MIN_WIN_RATE) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `Win rate ${(state.metrics.winRate * 100).toFixed(1)}% below ${MIN_WIN_RATE * 100}% target. Continuing to learn and improve before sending signals.`
+                );
+            }
 
             const direction = args.direction?.toUpperCase() || 'LONG';
             const directionEmoji = direction === 'LONG' ? '🟢' : '🔴';
 
+            // Token Metrics alignment indicator
+            let tmBadge = '';
+            if (args.tm_aligned === 'yes') {
+                tmBadge = '\n🤖 TM Signal: ✅ ALIGNED';
+            } else if (args.tm_aligned === 'no') {
+                tmBadge = '\n🤖 TM Signal: ⚠️ DIVERGENT';
+            }
+
             const message = `
-🎯 Trade Signal ${learningNote}
+🎯 Trade Signal ✅
 ${args.asset} · ${directionEmoji} ${direction} · ⏱️ ${args.timeframe || '4h'}
 
 Entry: ${args.entry}
 Target: ${args.target}
 Stop: ${args.stop}
-
-${args.notes || ''}
+${tmBadge}
+${args.notes ? '\n' + args.notes : ''}
 
 📊 Win Rate: ${(state.metrics.winRate * 100).toFixed(0)}% | Trades: ${state.metrics.totalTrades}
 🦍 Silverback Intelligence
@@ -554,8 +583,22 @@ You analyze markets and send valuable signals to Telegram based on your LEARNING
 1. Check your learning stats with analyze_for_signal
 2. Look for price movers with get_price_movers
 3. Check sentiment with get_fear_greed_index
-4. If something significant found AND confidence allows, send alert
-5. Include your analysis based on what you've learned
+4. **IMPORTANT**: Before sending trade calls, check Token Metrics:
+   - Use get_ai_trading_signals to get TM's recommendation
+   - Use get_token_grades for confidence level
+   - Include tm_aligned='yes' or 'no' in your trade call
+5. If something significant found AND confidence allows, send alert
+6. Include your analysis based on what you've learned
+
+=== TOKEN METRICS INTEGRATION ===
+
+When Token Metrics API is available:
+- ALWAYS check TM signals before sending trade calls
+- Include TM alignment status in your signals
+- If TM disagrees with your signal, consider:
+  - Reducing position size recommendation
+  - Adding a disclaimer about divergent signals
+  - Skipping the signal if confidence is low
 
 === SCHEDULE ===
 
@@ -575,6 +618,12 @@ Remember: Your Telegram subscribers trust you. Only send signals you believe in 
         getMarketOverviewFunction,     // BTC, ETH overview
         getTrendingCoinsFunction,      // What's trending
         getFearGreedIndexFunction,     // Sentiment indicator
+        // Token Metrics AI signals (check before sending calls!)
+        ...(isTokenMetricsAvailable() ? [
+            getAITradingSignalsFunction,   // Get TM buy/sell signals
+            getTokenGradesFunction,        // Get TM trader grades
+            getMarketSentimentFunction     // Get TM sentiment
+        ] : []),
         // Trade signals (professional format)
         sendTradeCallFunction,         // Send trade entry signal
         sendTradeUpdateFunction,       // Send TP/Stop/Update notifications

@@ -2,9 +2,9 @@ import { GameAgent, LLMModel } from "@virtuals-protocol/game";
 import { twitterWorker } from "./workers/twitter-worker";
 import { learningWorker } from "./workers/learning-worker";
 import { telegramSignalsWorker, isTelegramWorkerEnabled } from "./workers/telegram-signals-worker";
+import { paperTradingWorker } from "./workers/paper-trading-worker";
 // Disabled workers to reduce API costs
 // import { tradingWorker } from "./workers/trading-worker";
-// import { paperTradingWorker } from "./workers/paper-trading-worker";
 import { SILVERBACK_KNOWLEDGE } from "./knowledge";
 import { stateManager } from "./state/state-manager";
 import dotenv from "dotenv";
@@ -416,10 +416,11 @@ Always use functions to verify data before making claims. Real numbers from real
 
 Your mission is to prove that AI agents can be trusted sources of market intelligence and community protection—not through hype or promises, but through consistent analysis, transparent infrastructure operation, and genuine value delivery to the ecosystem. You demonstrate competence through what you've built (Silverback DEX) and what you observe (market intelligence), creating a foundation of trust that compounds over time.`,
     
-    // Twitter for community building + Learning + Telegram signals (if configured)
+    // Twitter for community building + Paper Trading for learning + Learning analysis + Telegram signals (if configured)
     workers: [
         twitterWorker,
-        learningWorker,
+        paperTradingWorker,  // Simulates trades to learn strategies
+        learningWorker,      // Analyzes performance and generates insights
         ...(isTelegramWorkerEnabled() ? [telegramSignalsWorker] : [])
     ],
     // Use smaller model to reduce API costs (70B instead of 405B)
