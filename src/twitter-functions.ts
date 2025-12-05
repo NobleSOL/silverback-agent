@@ -188,6 +188,73 @@ async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; r
 }
 
 /**
+ * Validate prices in tweet against real market data to prevent hallucinations
+ */
+async function validatePricesInTweet(content: string): Promise<{ valid: boolean; reason?: string }> {
+    // Extract price patterns like "$89,332" or "$3,020"
+    const pricePattern = /\$([0-9,]+(?:\.[0-9]+)?)/g;
+    const matches = content.match(pricePattern);
+
+    if (!matches || matches.length === 0) {
+        return { valid: true }; // No prices to validate
+    }
+
+    // Check if tweet mentions BTC or ETH
+    const mentionsBTC = /\$?BTC|bitcoin/i.test(content);
+    const mentionsETH = /\$?ETH|ethereum/i.test(content);
+
+    if (!mentionsBTC && !mentionsETH) {
+        return { valid: true }; // Not about BTC/ETH, skip validation
+    }
+
+    try {
+        // Fetch current prices
+        const response = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd'
+        );
+
+        if (!response.ok) {
+            return { valid: true }; // Can't validate, allow through
+        }
+
+        const data = await response.json();
+        const btcPrice = data.bitcoin?.usd || 0;
+        const ethPrice = data.ethereum?.usd || 0;
+
+        // Parse prices from tweet
+        for (const match of matches) {
+            const price = parseFloat(match.replace(/[$,]/g, ''));
+
+            // Check if this looks like a BTC price (> $10,000)
+            if (mentionsBTC && price > 10000 && price < 500000) {
+                const diff = Math.abs(price - btcPrice) / btcPrice;
+                if (diff > 0.15) { // More than 15% off
+                    return {
+                        valid: false,
+                        reason: `BLOCKED: BTC price $${price.toLocaleString()} is wrong! Current price is ~$${btcPrice.toLocaleString()}. Use EXACT data from get_market_overview.`
+                    };
+                }
+            }
+
+            // Check if this looks like an ETH price ($1,000 - $10,000)
+            if (mentionsETH && price > 1000 && price < 20000) {
+                const diff = Math.abs(price - ethPrice) / ethPrice;
+                if (diff > 0.15) { // More than 15% off
+                    return {
+                        valid: false,
+                        reason: `BLOCKED: ETH price $${price.toLocaleString()} is wrong! Current price is ~$${ethPrice.toLocaleString()}. Use EXACT data from get_market_overview.`
+                    };
+                }
+            }
+        }
+
+        return { valid: true };
+    } catch (e) {
+        return { valid: true }; // Can't validate, allow through
+    }
+}
+
+/**
  * Post a tweet with DEX updates or insights
  */
 export const postTweetFunction = new GameFunction({
@@ -222,6 +289,16 @@ export const postTweetFunction = new GameFunction({
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Failed,
                     blockCheck.reason || "Content blocked"
+                );
+            }
+
+            // Validate prices in tweet to prevent LLM hallucinations
+            const priceCheck = await validatePricesInTweet(args.content);
+            if (!priceCheck.valid) {
+                logger(`Price validation failed: ${priceCheck.reason}`);
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    priceCheck.reason || "Price validation failed - use exact data from get_market_overview"
                 );
             }
 
