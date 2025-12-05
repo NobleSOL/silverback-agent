@@ -6,27 +6,35 @@ import {
 import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./twitter";
 import { stateManager } from "./state/state-manager";
 
-// Track tweets we've already replied to (loaded from database + in-memory for current session)
-let repliedTweetIds: Set<string>;
+// Track tweets we've already replied to (in-memory cache + database)
+let repliedTweetIds: Set<string> = new Set();
+let repliedIdsLoaded = false;
 
 // Initialize from database on first access
-function getRepliedTweetIds(): Set<string> {
-    if (!repliedTweetIds) {
-        repliedTweetIds = stateManager.getRepliedTweetIds();
-        console.log(`📝 Loaded ${repliedTweetIds.size} replied tweet IDs from database`);
+async function loadRepliedTweetIds(): Promise<Set<string>> {
+    if (!repliedIdsLoaded) {
+        try {
+            repliedTweetIds = await stateManager.getRepliedTweetIds();
+            repliedIdsLoaded = true;
+            console.log(`📝 Loaded ${repliedTweetIds.size} replied tweet IDs from database`);
+        } catch (e) {
+            console.error('Failed to load replied tweet IDs:', e);
+        }
     }
     return repliedTweetIds;
 }
 
 // Mark tweet as replied (saves to both memory and database)
-function markTweetAsReplied(tweetId: string): void {
-    getRepliedTweetIds().add(tweetId);
-    stateManager.markTweetReplied(tweetId);
+async function markTweetAsReplied(tweetId: string): Promise<void> {
+    repliedTweetIds.add(tweetId);
+    await stateManager.markTweetReplied(tweetId);
 }
 
 // Check if already replied
-function hasRepliedToTweet(tweetId: string): boolean {
-    return getRepliedTweetIds().has(tweetId) || stateManager.hasRepliedToTweet(tweetId);
+async function hasRepliedToTweet(tweetId: string): Promise<boolean> {
+    await loadRepliedTweetIds();
+    if (repliedTweetIds.has(tweetId)) return true;
+    return await stateManager.hasRepliedToTweet(tweetId);
 }
 
 // BANNED PHRASES - these make tweets sound like a bot/marketing
@@ -57,9 +65,9 @@ const BANNED_PHRASES = [
 ];
 
 // Clean old database entries every hour
-setInterval(() => {
+setInterval(async () => {
     try {
-        stateManager.cleanOldRepliedTweets();
+        await stateManager.cleanOldRepliedTweets();
         console.log('🧹 Cleaned old replied tweet records from database');
     } catch (e) {
         console.error('Failed to clean old records:', e);
@@ -124,7 +132,7 @@ function detectTopic(content: string): string {
 /**
  * Check if tweet should be blocked (uses database for persistence)
  */
-function shouldBlockTweet(newContent: string): { block: boolean; reason?: string } {
+async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; reason?: string }> {
     // Check for banned phrases first
     const bannedPhrase = containsBannedPhrase(newContent);
     if (bannedPhrase) {
@@ -147,7 +155,7 @@ function shouldBlockTweet(newContent: string): { block: boolean; reason?: string
     // Note: TVL/DeFi metrics are now allowed but will be rotated via topic tracking
 
     // Check if same topic was posted recently (from database)
-    const recentTopics = stateManager.getRecentTopics(5);
+    const recentTopics = await stateManager.getRecentTopics(5);
     if (recentTopics.includes(newTopic) && newTopic !== 'general') {
         return {
             block: true,
@@ -159,7 +167,7 @@ function shouldBlockTweet(newContent: string): { block: boolean; reason?: string
     const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
     const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
 
-    const recentTweets = stateManager.getRecentPostedTweets(4); // Last 4 hours
+    const recentTweets = await stateManager.getRecentPostedTweets(4); // Last 4 hours
     for (const recent of recentTweets) {
         const normalizedRecent = recent.content.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
 
@@ -208,7 +216,7 @@ export const postTweetFunction = new GameFunction({
             }
 
             // Check for blocked content (banned phrases, duplicate topics, similarity)
-            const blockCheck = shouldBlockTweet(args.content);
+            const blockCheck = await shouldBlockTweet(args.content);
             if (blockCheck.block) {
                 logger(`Blocked: ${blockCheck.reason}`);
                 return new ExecutableGameFunctionResponse(
@@ -224,7 +232,7 @@ export const postTweetFunction = new GameFunction({
             const result = await twitterClient.v2.tweet(args.content);
 
             // Track this tweet in database for persistence across restarts
-            stateManager.recordPostedTweet(args.content, topic);
+            await stateManager.recordPostedTweet(args.content, topic);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -316,7 +324,7 @@ export const replyToTweetFunction = new GameFunction({
             const content = args.content;
 
             // Check if we've already replied to this tweet (checks both memory and database)
-            if (hasRepliedToTweet(tweetId)) {
+            if (await hasRepliedToTweet(tweetId)) {
                 logger(`Blocked duplicate reply to tweet ${tweetId} - already replied`);
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Failed,
@@ -344,7 +352,7 @@ export const replyToTweetFunction = new GameFunction({
             const result = await twitterClient.v2.reply(content, tweetId);
 
             // Track this reply to prevent duplicates (saves to database for persistence)
-            markTweetAsReplied(tweetId);
+            await markTweetAsReplied(tweetId);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -480,7 +488,8 @@ export const getMentionsFunction = new GameFunction({
             const userMap = new Map(users.map((u: any) => [u.id, { username: u.username, name: u.name }]));
 
             // Filter out mentions we've already replied to (checks database for persistence across restarts)
-            const unrepliedMentions = allMentions.filter((t: any) => !hasRepliedToTweet(t.id));
+            const repliedChecks = await Promise.all(allMentions.map((t: any) => hasRepliedToTweet(t.id)));
+            const unrepliedMentions = allMentions.filter((_: any, i: number) => !repliedChecks[i]);
             const alreadyRepliedCount = allMentions.length - unrepliedMentions.length;
 
             if (alreadyRepliedCount > 0) {

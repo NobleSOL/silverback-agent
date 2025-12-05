@@ -1,115 +1,112 @@
 /**
  * Silverback State Manager
- * Manages persistent state using SQLite for scalability and querying
+ * Manages persistent state using PostgreSQL for cloud persistence on Render
  */
 
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { Pool } from 'pg';
 import { SilverbackState, Trade, TradingMetrics, StrategyPerformance } from '../types/agent-state';
 
-// Database file path (relative to project root)
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'silverback.db');
+// Use DATABASE_URL from environment (Render PostgreSQL)
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
 
 export class StateManager {
     private state: SilverbackState;
-    private db: Database.Database;
+    private initialized: boolean = false;
 
     constructor() {
-        // Ensure data directory exists
-        if (!fs.existsSync(DATA_DIR)) {
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-            console.log(`📁 Created data directory: ${DATA_DIR}`);
-        }
-        this.db = new Database(DB_FILE);
-        this.initializeDatabase();
         this.state = this.getDefaultState();
-
-        // Load persisted state from database
-        this.loadSync();
+        // Initialize async - will complete before first use
+        this.initialize().catch(e => {
+            console.error('Failed to initialize state manager:', e);
+        });
     }
 
-    /**
-     * Synchronously load state on startup
-     */
-    private loadSync(): void {
+    private async initialize(): Promise<void> {
+        if (this.initialized) return;
+
         try {
-            const stateRow = this.db.prepare('SELECT value FROM state WHERE key = ?').get('current_state');
-            if (stateRow) {
-                const loaded = JSON.parse((stateRow as any).value);
-                this.state = { ...this.getDefaultState(), ...loaded };
-                console.log(`📊 Loaded learning state: ${this.state.metrics.totalTrades} trades, ${(this.state.metrics.winRate * 100).toFixed(1)}% win rate`);
-            } else {
-                console.log(`📊 Starting fresh - no previous learning state found`);
-            }
+            await this.initializeDatabase();
+            await this.loadState();
+            this.initialized = true;
         } catch (e) {
-            console.log('📊 Starting fresh state (load error)');
+            console.error('Database initialization error:', e);
+            // Continue with default state if DB unavailable
+            this.initialized = true;
         }
     }
 
-    private initializeDatabase(): void {
-        // Create tables if they don't exist
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS trades (
-                id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                strategy TEXT NOT NULL,
-                tokenIn TEXT NOT NULL,
-                tokenOut TEXT NOT NULL,
-                amountIn REAL NOT NULL,
-                amountOut REAL NOT NULL,
-                expectedOut REAL NOT NULL,
-                slippage REAL NOT NULL,
-                priceImpact REAL NOT NULL,
-                outcome TEXT NOT NULL,
-                pnl REAL NOT NULL,
-                volatility TEXT,
-                liquidityRating TEXT,
-                trend TEXT,
-                lessons TEXT
-            );
+    private async initializeDatabase(): Promise<void> {
+        const client = await pool.connect();
+        try {
+            // Create tables if they don't exist
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS trades (
+                    id TEXT PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    strategy TEXT NOT NULL,
+                    token_in TEXT NOT NULL,
+                    token_out TEXT NOT NULL,
+                    amount_in REAL NOT NULL,
+                    amount_out REAL NOT NULL,
+                    expected_out REAL NOT NULL,
+                    slippage REAL NOT NULL,
+                    price_impact REAL NOT NULL,
+                    outcome TEXT NOT NULL,
+                    pnl REAL NOT NULL,
+                    volatility TEXT,
+                    liquidity_rating TEXT,
+                    trend TEXT,
+                    lessons JSONB
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
-            CREATE INDEX IF NOT EXISTS idx_trades_outcome ON trades(outcome);
-            CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
+                CREATE INDEX IF NOT EXISTS idx_trades_outcome ON trades(outcome);
+                CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
 
-            CREATE TABLE IF NOT EXISTS state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS agent_state (
+                    key TEXT PRIMARY KEY,
+                    value JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
 
-            CREATE TABLE IF NOT EXISTS market_data (
-                timestamp TEXT NOT NULL,
-                tokenPair TEXT NOT NULL,
-                price REAL NOT NULL,
-                volume REAL NOT NULL,
-                liquidity REAL NOT NULL,
-                ema9 REAL,
-                ema21 REAL,
-                rsi REAL,
-                bbUpper REAL,
-                bbLower REAL,
-                bbMiddle REAL,
-                PRIMARY KEY (timestamp, tokenPair)
-            );
+                CREATE TABLE IF NOT EXISTS market_data (
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    token_pair TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    liquidity REAL NOT NULL,
+                    ema9 REAL,
+                    ema21 REAL,
+                    rsi REAL,
+                    bb_upper REAL,
+                    bb_lower REAL,
+                    bb_middle REAL,
+                    PRIMARY KEY (timestamp, token_pair)
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_market_data_pair ON market_data(tokenPair);
+                CREATE INDEX IF NOT EXISTS idx_market_data_pair ON market_data(token_pair);
 
-            CREATE TABLE IF NOT EXISTS replied_tweets (
-                tweet_id TEXT PRIMARY KEY,
-                replied_at TEXT NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS replied_tweets (
+                    tweet_id TEXT PRIMARY KEY,
+                    replied_at TIMESTAMPTZ NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS recent_tweets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                topic TEXT NOT NULL,
-                posted_at TEXT NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS recent_tweets (
+                    id SERIAL PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    posted_at TIMESTAMPTZ NOT NULL
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
-        `);
+                CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
+            `);
+            console.log('📊 PostgreSQL tables initialized');
+        } finally {
+            client.release();
+        }
     }
 
     private getDefaultState(): SilverbackState {
@@ -166,23 +163,41 @@ export class StateManager {
         };
     }
 
-    async load(): Promise<void> {
+    private async loadState(): Promise<void> {
         try {
-            const stateRow = this.db.prepare('SELECT value FROM state WHERE key = ?').get('current_state');
-            if (stateRow) {
-                this.state = JSON.parse((stateRow as any).value);
+            const result = await pool.query(
+                'SELECT value FROM agent_state WHERE key = $1',
+                ['current_state']
+            );
+
+            if (result.rows.length > 0) {
+                const loaded = result.rows[0].value;
+                this.state = { ...this.getDefaultState(), ...loaded };
+                console.log(`📊 Loaded learning state: ${this.state.metrics.totalTrades} trades, ${(this.state.metrics.winRate * 100).toFixed(1)}% win rate`);
             } else {
+                console.log(`📊 Starting fresh - no previous learning state found`);
                 await this.save();
             }
         } catch (e) {
-            console.log('Initializing fresh state...');
-            await this.save();
+            console.log('📊 Starting fresh state (database not available or error)');
         }
     }
 
+    async load(): Promise<void> {
+        await this.loadState();
+    }
+
     async save(): Promise<void> {
-        this.db.prepare('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)')
-            .run('current_state', JSON.stringify(this.state));
+        try {
+            await pool.query(
+                `INSERT INTO agent_state (key, value, updated_at)
+                 VALUES ($1, $2, NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+                ['current_state', JSON.stringify(this.state)]
+            );
+        } catch (e) {
+            console.error('Failed to save state:', e);
+        }
     }
 
     getState(): SilverbackState {
@@ -190,46 +205,59 @@ export class StateManager {
     }
 
     async recordTrade(trade: Trade): Promise<void> {
-        // Insert into database (permanent record)
-        this.db.prepare(`
-            INSERT INTO trades (
-                id, timestamp, strategy, tokenIn, tokenOut, amountIn, amountOut,
-                expectedOut, slippage, priceImpact, outcome, pnl,
-                volatility, liquidityRating, trend, lessons
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-            trade.id,
-            trade.timestamp,
-            trade.strategy,
-            trade.tokenIn,
-            trade.tokenOut,
-            trade.amountIn,
-            trade.amountOut,
-            trade.expectedOut,
-            trade.slippage,
-            trade.priceImpact,
-            trade.outcome,
-            trade.pnl,
-            trade.marketConditions.volatility,
-            trade.marketConditions.liquidityRating,
-            trade.marketConditions.trend,
-            JSON.stringify(trade.lessons)
-        );
+        // Ensure initialized
+        if (!this.initialized) {
+            await this.initialize();
+        }
 
-        // Update recent trades in state (last 100)
-        this.state.recentTrades = this.getRecentTrades(100);
+        try {
+            // Insert into database (permanent record)
+            await pool.query(`
+                INSERT INTO trades (
+                    id, timestamp, strategy, token_in, token_out, amount_in, amount_out,
+                    expected_out, slippage, price_impact, outcome, pnl,
+                    volatility, liquidity_rating, trend, lessons
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                ON CONFLICT (id) DO NOTHING
+            `, [
+                trade.id,
+                trade.timestamp,
+                trade.strategy,
+                trade.tokenIn,
+                trade.tokenOut,
+                trade.amountIn,
+                trade.amountOut,
+                trade.expectedOut,
+                trade.slippage,
+                trade.priceImpact,
+                trade.outcome,
+                trade.pnl,
+                trade.marketConditions.volatility,
+                trade.marketConditions.liquidityRating,
+                trade.marketConditions.trend,
+                JSON.stringify(trade.lessons)
+            ]);
 
-        // Update metrics
-        this.updateMetrics(trade);
+            // Update recent trades in state (last 100)
+            this.state.recentTrades = await this.getRecentTrades(100);
 
-        // Update strategy performance
-        this.updateStrategyPerformance(trade);
+            // Update metrics
+            this.updateMetrics(trade);
 
-        // Extract insights
-        await this.extractInsights();
+            // Update strategy performance
+            this.updateStrategyPerformance(trade);
 
-        // Save state
-        await this.save();
+            // Extract insights
+            await this.extractInsights();
+
+            // Save state
+            await this.save();
+        } catch (e) {
+            console.error('Failed to record trade:', e);
+            // Still update in-memory state even if DB fails
+            this.updateMetrics(trade);
+            this.updateStrategyPerformance(trade);
+        }
     }
 
     private updateMetrics(trade: Trade): void {
@@ -248,8 +276,6 @@ export class StateManager {
 
         this.state.metrics.totalPnL += trade.pnl;
         this.state.metrics.lastUpdated = new Date().toISOString();
-
-        // TODO: Calculate max drawdown and Sharpe ratio
     }
 
     private updateStrategyPerformance(trade: Trade): void {
@@ -311,30 +337,45 @@ export class StateManager {
         await this.save();
     }
 
-    getRecentTrades(limit: number = 100): Trade[] {
-        const rows = this.db.prepare(`
-            SELECT * FROM trades
-            ORDER BY timestamp DESC
-            LIMIT ?
-        `).all(limit);
+    async getRecentTrades(limit: number = 100): Promise<Trade[]> {
+        try {
+            const result = await pool.query(`
+                SELECT * FROM trades
+                ORDER BY timestamp DESC
+                LIMIT $1
+            `, [limit]);
 
-        return this.mapRowsToTrades(rows as any[]);
+            return this.mapRowsToTrades(result.rows);
+        } catch (e) {
+            return this.state.recentTrades || [];
+        }
     }
 
     // Query trades by strategy
-    getTradesByStrategy(strategy: string): Trade[] {
-        const rows = this.db.prepare('SELECT * FROM trades WHERE strategy = ? ORDER BY timestamp DESC').all(strategy);
-        return this.mapRowsToTrades(rows as any[]);
+    async getTradesByStrategy(strategy: string): Promise<Trade[]> {
+        try {
+            const result = await pool.query(
+                'SELECT * FROM trades WHERE strategy = $1 ORDER BY timestamp DESC',
+                [strategy]
+            );
+            return this.mapRowsToTrades(result.rows);
+        } catch (e) {
+            return [];
+        }
     }
 
     // Query winning trades in specific market conditions
-    getWinningTradesInConditions(volatility: string, trend: string): Trade[] {
-        const rows = this.db.prepare(`
-            SELECT * FROM trades
-            WHERE outcome = 'win' AND volatility = ? AND trend = ?
-            ORDER BY timestamp DESC
-        `).all(volatility, trend);
-        return this.mapRowsToTrades(rows as any[]);
+    async getWinningTradesInConditions(volatility: string, trend: string): Promise<Trade[]> {
+        try {
+            const result = await pool.query(`
+                SELECT * FROM trades
+                WHERE outcome = 'win' AND volatility = $1 AND trend = $2
+                ORDER BY timestamp DESC
+            `, [volatility, trend]);
+            return this.mapRowsToTrades(result.rows);
+        } catch (e) {
+            return [];
+        }
     }
 
     private mapRowsToTrades(rows: any[]): Trade[] {
@@ -342,21 +383,21 @@ export class StateManager {
             id: row.id,
             timestamp: row.timestamp,
             strategy: row.strategy,
-            tokenIn: row.tokenIn,
-            tokenOut: row.tokenOut,
-            amountIn: row.amountIn,
-            amountOut: row.amountOut,
-            expectedOut: row.expectedOut,
+            tokenIn: row.token_in,
+            tokenOut: row.token_out,
+            amountIn: row.amount_in,
+            amountOut: row.amount_out,
+            expectedOut: row.expected_out,
             slippage: row.slippage,
-            priceImpact: row.priceImpact,
+            priceImpact: row.price_impact,
             outcome: row.outcome,
             pnl: row.pnl,
             marketConditions: {
                 volatility: row.volatility,
-                liquidityRating: row.liquidityRating,
+                liquidityRating: row.liquidity_rating,
                 trend: row.trend
             },
-            lessons: JSON.parse(row.lessons)
+            lessons: typeof row.lessons === 'string' ? JSON.parse(row.lessons) : row.lessons
         }));
     }
 
@@ -365,76 +406,112 @@ export class StateManager {
     /**
      * Check if we've already replied to a tweet
      */
-    hasRepliedToTweet(tweetId: string): boolean {
-        const row = this.db.prepare('SELECT tweet_id FROM replied_tweets WHERE tweet_id = ?').get(tweetId);
-        return !!row;
+    async hasRepliedToTweet(tweetId: string): Promise<boolean> {
+        try {
+            const result = await pool.query(
+                'SELECT tweet_id FROM replied_tweets WHERE tweet_id = $1',
+                [tweetId]
+            );
+            return result.rows.length > 0;
+        } catch (e) {
+            return false;
+        }
     }
 
     /**
      * Mark a tweet as replied to
      */
-    markTweetReplied(tweetId: string): void {
-        this.db.prepare('INSERT OR IGNORE INTO replied_tweets (tweet_id, replied_at) VALUES (?, ?)')
-            .run(tweetId, new Date().toISOString());
+    async markTweetReplied(tweetId: string): Promise<void> {
+        try {
+            await pool.query(
+                'INSERT INTO replied_tweets (tweet_id, replied_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING',
+                [tweetId]
+            );
+        } catch (e) {
+            console.error('Failed to mark tweet replied:', e);
+        }
     }
 
     /**
      * Get all replied tweet IDs (for loading into memory on startup)
      */
-    getRepliedTweetIds(): Set<string> {
-        const rows = this.db.prepare('SELECT tweet_id FROM replied_tweets').all() as { tweet_id: string }[];
-        return new Set(rows.map(r => r.tweet_id));
+    async getRepliedTweetIds(): Promise<Set<string>> {
+        try {
+            const result = await pool.query('SELECT tweet_id FROM replied_tweets');
+            return new Set(result.rows.map(r => r.tweet_id));
+        } catch (e) {
+            return new Set();
+        }
     }
 
     /**
      * Clean old replied tweets (keep last 7 days)
      */
-    cleanOldRepliedTweets(): void {
-        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        this.db.prepare('DELETE FROM replied_tweets WHERE replied_at < ?').run(cutoff);
+    async cleanOldRepliedTweets(): Promise<void> {
+        try {
+            await pool.query(
+                "DELETE FROM replied_tweets WHERE replied_at < NOW() - INTERVAL '7 days'"
+            );
+        } catch (e) {
+            console.error('Failed to clean old replied tweets:', e);
+        }
     }
 
     /**
      * Record a posted tweet for duplicate prevention
      */
-    recordPostedTweet(content: string, topic: string): void {
-        this.db.prepare('INSERT INTO recent_tweets (content, topic, posted_at) VALUES (?, ?, ?)')
-            .run(content, topic, new Date().toISOString());
+    async recordPostedTweet(content: string, topic: string): Promise<void> {
+        try {
+            await pool.query(
+                'INSERT INTO recent_tweets (content, topic, posted_at) VALUES ($1, $2, NOW())',
+                [content, topic]
+            );
 
-        // Keep only last 50 tweets
-        this.db.prepare(`
-            DELETE FROM recent_tweets
-            WHERE id NOT IN (SELECT id FROM recent_tweets ORDER BY posted_at DESC LIMIT 50)
-        `).run();
+            // Keep only last 50 tweets
+            await pool.query(`
+                DELETE FROM recent_tweets
+                WHERE id NOT IN (SELECT id FROM recent_tweets ORDER BY posted_at DESC LIMIT 50)
+            `);
+        } catch (e) {
+            console.error('Failed to record posted tweet:', e);
+        }
     }
 
     /**
      * Get recent tweets for duplicate checking
      */
-    getRecentPostedTweets(hoursAgo: number = 4): { content: string; topic: string; posted_at: string }[] {
-        const cutoff = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
-        return this.db.prepare(`
-            SELECT content, topic, posted_at FROM recent_tweets
-            WHERE posted_at > ?
-            ORDER BY posted_at DESC
-        `).all(cutoff) as { content: string; topic: string; posted_at: string }[];
+    async getRecentPostedTweets(hoursAgo: number = 4): Promise<{ content: string; topic: string; posted_at: string }[]> {
+        try {
+            const result = await pool.query(`
+                SELECT content, topic, posted_at FROM recent_tweets
+                WHERE posted_at > NOW() - INTERVAL '${hoursAgo} hours'
+                ORDER BY posted_at DESC
+            `);
+            return result.rows;
+        } catch (e) {
+            return [];
+        }
     }
 
     /**
      * Get recent topics to prevent repetition
      */
-    getRecentTopics(limit: number = 5): string[] {
-        const rows = this.db.prepare(`
-            SELECT DISTINCT topic FROM recent_tweets
-            ORDER BY posted_at DESC
-            LIMIT ?
-        `).all(limit) as { topic: string }[];
-        return rows.map(r => r.topic);
+    async getRecentTopics(limit: number = 5): Promise<string[]> {
+        try {
+            const result = await pool.query(`
+                SELECT DISTINCT topic FROM recent_tweets
+                ORDER BY MAX(posted_at) DESC
+                LIMIT $1
+            `, [limit]);
+            return result.rows.map(r => r.topic);
+        } catch (e) {
+            return [];
+        }
     }
 
     // Close database connection (call on shutdown)
-    close(): void {
-        this.db.close();
+    async close(): Promise<void> {
+        await pool.end();
     }
 }
 
