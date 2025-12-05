@@ -19,6 +19,9 @@ import {
     getTokenGradesFunction,
     getResistanceSupportFunction,
     getPricePredictionsFunction,
+    getHourlySignalsFunction,
+    askAIAgentFunction,
+    getMoonshotTokensFunction,
     isTokenMetricsAvailable,
     getApiUsageStats
 } from '../plugins/token-metrics';
@@ -481,9 +484,12 @@ export const paperTradingWorker = new GameWorker({
         // Token Metrics AI signals (use first for 70% win rate!)
         ...(isTokenMetricsAvailable() ? [
             getAITradingSignalsFunction,      // LONG/SHORT signals
-            getTokenGradesFunction,           // Trader/Investor grades (0-100)
+            getTokenGradesFunction,           // TM grades (0-100)
             getResistanceSupportFunction,     // Entry/exit price levels
-            getPricePredictionsFunction       // AI price targets
+            getPricePredictionsFunction,      // AI price targets
+            getHourlySignalsFunction,         // More frequent signals
+            askAIAgentFunction,               // Ask TM AI for insights
+            getMoonshotTokensFunction         // AI-curated high potential picks
         ] : []),
         // Your analysis and execution
         analyzeTradeOpportunityFunction,
