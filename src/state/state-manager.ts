@@ -74,6 +74,20 @@ export class StateManager {
             );
 
             CREATE INDEX IF NOT EXISTS idx_market_data_pair ON market_data(tokenPair);
+
+            CREATE TABLE IF NOT EXISTS replied_tweets (
+                tweet_id TEXT PRIMARY KEY,
+                replied_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS recent_tweets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                posted_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
         `);
     }
 
@@ -323,6 +337,78 @@ export class StateManager {
             },
             lessons: JSON.parse(row.lessons)
         }));
+    }
+
+    // === TWITTER TRACKING METHODS ===
+
+    /**
+     * Check if we've already replied to a tweet
+     */
+    hasRepliedToTweet(tweetId: string): boolean {
+        const row = this.db.prepare('SELECT tweet_id FROM replied_tweets WHERE tweet_id = ?').get(tweetId);
+        return !!row;
+    }
+
+    /**
+     * Mark a tweet as replied to
+     */
+    markTweetReplied(tweetId: string): void {
+        this.db.prepare('INSERT OR IGNORE INTO replied_tweets (tweet_id, replied_at) VALUES (?, ?)')
+            .run(tweetId, new Date().toISOString());
+    }
+
+    /**
+     * Get all replied tweet IDs (for loading into memory on startup)
+     */
+    getRepliedTweetIds(): Set<string> {
+        const rows = this.db.prepare('SELECT tweet_id FROM replied_tweets').all() as { tweet_id: string }[];
+        return new Set(rows.map(r => r.tweet_id));
+    }
+
+    /**
+     * Clean old replied tweets (keep last 7 days)
+     */
+    cleanOldRepliedTweets(): void {
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        this.db.prepare('DELETE FROM replied_tweets WHERE replied_at < ?').run(cutoff);
+    }
+
+    /**
+     * Record a posted tweet for duplicate prevention
+     */
+    recordPostedTweet(content: string, topic: string): void {
+        this.db.prepare('INSERT INTO recent_tweets (content, topic, posted_at) VALUES (?, ?, ?)')
+            .run(content, topic, new Date().toISOString());
+
+        // Keep only last 50 tweets
+        this.db.prepare(`
+            DELETE FROM recent_tweets
+            WHERE id NOT IN (SELECT id FROM recent_tweets ORDER BY posted_at DESC LIMIT 50)
+        `).run();
+    }
+
+    /**
+     * Get recent tweets for duplicate checking
+     */
+    getRecentPostedTweets(hoursAgo: number = 4): { content: string; topic: string; posted_at: string }[] {
+        const cutoff = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+        return this.db.prepare(`
+            SELECT content, topic, posted_at FROM recent_tweets
+            WHERE posted_at > ?
+            ORDER BY posted_at DESC
+        `).all(cutoff) as { content: string; topic: string; posted_at: string }[];
+    }
+
+    /**
+     * Get recent topics to prevent repetition
+     */
+    getRecentTopics(limit: number = 5): string[] {
+        const rows = this.db.prepare(`
+            SELECT DISTINCT topic FROM recent_tweets
+            ORDER BY posted_at DESC
+            LIMIT ?
+        `).all(limit) as { topic: string }[];
+        return rows.map(r => r.topic);
     }
 
     // Close database connection (call on shutdown)
