@@ -5,12 +5,19 @@
 
 import { Pool } from 'pg';
 import { SilverbackState, Trade, TradingMetrics, StrategyPerformance } from '../types/agent-state';
+import dotenv from 'dotenv';
+
+// Load environment variables BEFORE creating the pool
+dotenv.config();
+
+// Debug: Log whether DATABASE_URL is set
+console.log(`📊 DATABASE_URL configured: ${process.env.DATABASE_URL ? 'Yes' : 'No (will use in-memory state)'}`);
 
 // Use DATABASE_URL from environment (Render PostgreSQL)
-const pool = new Pool({
+const pool = process.env.DATABASE_URL ? new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
+    ssl: { rejectUnauthorized: false }
+}) : null;
 
 export class StateManager {
     private state: SilverbackState;
@@ -39,6 +46,10 @@ export class StateManager {
     }
 
     private async initializeDatabase(): Promise<void> {
+        if (!pool) {
+            console.log('📊 No database configured, using in-memory state');
+            return;
+        }
         const client = await pool.connect();
         try {
             // Create tables if they don't exist
@@ -164,6 +175,10 @@ export class StateManager {
     }
 
     private async loadState(): Promise<void> {
+        if (!pool) {
+            console.log('📊 No database - using in-memory state');
+            return;
+        }
         try {
             const result = await pool.query(
                 'SELECT value FROM agent_state WHERE key = $1',
@@ -188,6 +203,7 @@ export class StateManager {
     }
 
     async save(): Promise<void> {
+        if (!pool) return; // Skip if no database
         try {
             await pool.query(
                 `INSERT INTO agent_state (key, value, updated_at)
@@ -211,35 +227,43 @@ export class StateManager {
         }
 
         try {
-            // Insert into database (permanent record)
-            await pool.query(`
-                INSERT INTO trades (
-                    id, timestamp, strategy, token_in, token_out, amount_in, amount_out,
-                    expected_out, slippage, price_impact, outcome, pnl,
-                    volatility, liquidity_rating, trend, lessons
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                ON CONFLICT (id) DO NOTHING
-            `, [
-                trade.id,
-                trade.timestamp,
-                trade.strategy,
-                trade.tokenIn,
-                trade.tokenOut,
-                trade.amountIn,
-                trade.amountOut,
-                trade.expectedOut,
-                trade.slippage,
-                trade.priceImpact,
-                trade.outcome,
-                trade.pnl,
-                trade.marketConditions.volatility,
-                trade.marketConditions.liquidityRating,
-                trade.marketConditions.trend,
-                JSON.stringify(trade.lessons)
-            ]);
+            // Insert into database (permanent record) if available
+            if (pool) {
+                await pool.query(`
+                    INSERT INTO trades (
+                        id, timestamp, strategy, token_in, token_out, amount_in, amount_out,
+                        expected_out, slippage, price_impact, outcome, pnl,
+                        volatility, liquidity_rating, trend, lessons
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    ON CONFLICT (id) DO NOTHING
+                `, [
+                    trade.id,
+                    trade.timestamp,
+                    trade.strategy,
+                    trade.tokenIn,
+                    trade.tokenOut,
+                    trade.amountIn,
+                    trade.amountOut,
+                    trade.expectedOut,
+                    trade.slippage,
+                    trade.priceImpact,
+                    trade.outcome,
+                    trade.pnl,
+                    trade.marketConditions.volatility,
+                    trade.marketConditions.liquidityRating,
+                    trade.marketConditions.trend,
+                    JSON.stringify(trade.lessons)
+                ]);
 
-            // Update recent trades in state (last 100)
-            this.state.recentTrades = await this.getRecentTrades(100);
+                // Update recent trades in state (last 100)
+                this.state.recentTrades = await this.getRecentTrades(100);
+            } else {
+                // In-memory only: add trade to recent trades
+                this.state.recentTrades.unshift(trade);
+                if (this.state.recentTrades.length > 100) {
+                    this.state.recentTrades = this.state.recentTrades.slice(0, 100);
+                }
+            }
 
             // Update metrics
             this.updateMetrics(trade);
@@ -255,6 +279,7 @@ export class StateManager {
         } catch (e) {
             console.error('Failed to record trade:', e);
             // Still update in-memory state even if DB fails
+            this.state.recentTrades.unshift(trade);
             this.updateMetrics(trade);
             this.updateStrategyPerformance(trade);
         }
@@ -338,6 +363,9 @@ export class StateManager {
     }
 
     async getRecentTrades(limit: number = 100): Promise<Trade[]> {
+        if (!pool) {
+            return this.state.recentTrades.slice(0, limit);
+        }
         try {
             const result = await pool.query(`
                 SELECT * FROM trades
@@ -353,6 +381,9 @@ export class StateManager {
 
     // Query trades by strategy
     async getTradesByStrategy(strategy: string): Promise<Trade[]> {
+        if (!pool) {
+            return this.state.recentTrades.filter(t => t.strategy === strategy);
+        }
         try {
             const result = await pool.query(
                 'SELECT * FROM trades WHERE strategy = $1 ORDER BY timestamp DESC',
@@ -366,6 +397,13 @@ export class StateManager {
 
     // Query winning trades in specific market conditions
     async getWinningTradesInConditions(volatility: string, trend: string): Promise<Trade[]> {
+        if (!pool) {
+            return this.state.recentTrades.filter(t =>
+                t.outcome === 'win' &&
+                t.marketConditions.volatility === volatility &&
+                t.marketConditions.trend === trend
+            );
+        }
         try {
             const result = await pool.query(`
                 SELECT * FROM trades
@@ -403,10 +441,17 @@ export class StateManager {
 
     // === TWITTER TRACKING METHODS ===
 
+    // In-memory caches for when DB is not available
+    private repliedTweetsCache: Set<string> = new Set();
+    private recentTweetsCache: { content: string; topic: string; posted_at: string }[] = [];
+
     /**
      * Check if we've already replied to a tweet
      */
     async hasRepliedToTweet(tweetId: string): Promise<boolean> {
+        if (!pool) {
+            return this.repliedTweetsCache.has(tweetId);
+        }
         try {
             const result = await pool.query(
                 'SELECT tweet_id FROM replied_tweets WHERE tweet_id = $1',
@@ -414,7 +459,7 @@ export class StateManager {
             );
             return result.rows.length > 0;
         } catch (e) {
-            return false;
+            return this.repliedTweetsCache.has(tweetId);
         }
     }
 
@@ -422,6 +467,8 @@ export class StateManager {
      * Mark a tweet as replied to
      */
     async markTweetReplied(tweetId: string): Promise<void> {
+        this.repliedTweetsCache.add(tweetId);
+        if (!pool) return;
         try {
             await pool.query(
                 'INSERT INTO replied_tweets (tweet_id, replied_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING',
@@ -436,11 +483,14 @@ export class StateManager {
      * Get all replied tweet IDs (for loading into memory on startup)
      */
     async getRepliedTweetIds(): Promise<Set<string>> {
+        if (!pool) {
+            return this.repliedTweetsCache;
+        }
         try {
             const result = await pool.query('SELECT tweet_id FROM replied_tweets');
             return new Set(result.rows.map(r => r.tweet_id));
         } catch (e) {
-            return new Set();
+            return this.repliedTweetsCache;
         }
     }
 
@@ -448,6 +498,7 @@ export class StateManager {
      * Clean old replied tweets (keep last 7 days)
      */
     async cleanOldRepliedTweets(): Promise<void> {
+        if (!pool) return;
         try {
             await pool.query(
                 "DELETE FROM replied_tweets WHERE replied_at < NOW() - INTERVAL '7 days'"
@@ -461,6 +512,13 @@ export class StateManager {
      * Record a posted tweet for duplicate prevention
      */
     async recordPostedTweet(content: string, topic: string): Promise<void> {
+        // Always update in-memory cache
+        this.recentTweetsCache.unshift({ content, topic, posted_at: new Date().toISOString() });
+        if (this.recentTweetsCache.length > 50) {
+            this.recentTweetsCache = this.recentTweetsCache.slice(0, 50);
+        }
+
+        if (!pool) return;
         try {
             await pool.query(
                 'INSERT INTO recent_tweets (content, topic, posted_at) VALUES ($1, $2, NOW())',
@@ -481,6 +539,10 @@ export class StateManager {
      * Get recent tweets for duplicate checking
      */
     async getRecentPostedTweets(hoursAgo: number = 4): Promise<{ content: string; topic: string; posted_at: string }[]> {
+        if (!pool) {
+            const cutoff = Date.now() - (hoursAgo * 60 * 60 * 1000);
+            return this.recentTweetsCache.filter(t => new Date(t.posted_at).getTime() > cutoff);
+        }
         try {
             const result = await pool.query(`
                 SELECT content, topic, posted_at FROM recent_tweets
@@ -489,7 +551,7 @@ export class StateManager {
             `);
             return result.rows;
         } catch (e) {
-            return [];
+            return this.recentTweetsCache;
         }
     }
 
@@ -497,6 +559,10 @@ export class StateManager {
      * Get recent topics to prevent repetition
      */
     async getRecentTopics(limit: number = 5): Promise<string[]> {
+        if (!pool) {
+            const topics = [...new Set(this.recentTweetsCache.map(t => t.topic))];
+            return topics.slice(0, limit);
+        }
         try {
             const result = await pool.query(`
                 SELECT DISTINCT topic FROM recent_tweets
@@ -511,7 +577,9 @@ export class StateManager {
 
     // Close database connection (call on shutdown)
     async close(): Promise<void> {
-        await pool.end();
+        if (pool) {
+            await pool.end();
+        }
     }
 }
 
