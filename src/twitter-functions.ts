@@ -426,6 +426,120 @@ export const searchMentionsFunction = new GameFunction({
 });
 
 /**
+ * Get direct mentions and replies to our account
+ * This is the PRIMARY function for finding people to engage with
+ */
+export const getMentionsFunction = new GameFunction({
+    name: "get_mentions",
+    description: "Get tweets that directly mention or reply to you. USE THIS FIRST before posting! This finds people asking questions or talking to you. Returns tweets you haven't replied to yet.",
+    args: [
+        {
+            name: "maxResults",
+            description: "Maximum number of mentions to return (default 10, max 50)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            const maxResults = Math.min(parseInt(args.maxResults || "10"), 50);
+
+            // Get own user ID
+            const ownId = await getOwnUserId();
+            if (!ownId) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    "Could not get authenticated user ID"
+                );
+            }
+
+            logger(`Fetching mentions for user ${ownId} (max ${maxResults})`);
+
+            // Get mentions timeline - tweets that mention the authenticated user
+            const mentions = await twitterClient.v2.userMentionTimeline(ownId, {
+                max_results: maxResults,
+                'tweet.fields': ['created_at', 'public_metrics', 'author_id', 'conversation_id', 'in_reply_to_user_id'],
+                expansions: ['author_id'],
+                'user.fields': ['username', 'name']
+            });
+
+            const allMentions = mentions.data.data || [];
+            const users = mentions.data.includes?.users || [];
+
+            // Create a map of user IDs to usernames
+            const userMap = new Map(users.map((u: any) => [u.id, { username: u.username, name: u.name }]));
+
+            // Filter out mentions we've already replied to
+            const unrepliedMentions = allMentions.filter((t: any) => !repliedTweetIds.has(t.id));
+            const alreadyRepliedCount = allMentions.length - unrepliedMentions.length;
+
+            if (alreadyRepliedCount > 0) {
+                logger(`Filtered out ${alreadyRepliedCount} mentions already replied to`);
+            }
+
+            // Format the response with user info
+            const formattedMentions = unrepliedMentions.map((t: any) => {
+                const user = userMap.get(t.author_id) || { username: 'unknown', name: 'Unknown' };
+                return {
+                    id: t.id,
+                    text: t.text,
+                    author_id: t.author_id,
+                    author_username: user.username,
+                    author_name: user.name,
+                    created_at: t.created_at,
+                    conversation_id: t.conversation_id,
+                    is_reply: !!t.in_reply_to_user_id,
+                    likes: t.public_metrics?.like_count || 0,
+                    retweets: t.public_metrics?.retweet_count || 0,
+                    replies: t.public_metrics?.reply_count || 0
+                };
+            });
+
+            if (formattedMentions.length === 0) {
+                logger("No new mentions to respond to");
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({
+                        success: true,
+                        count: 0,
+                        message: "No new mentions or replies to respond to. You can post original content.",
+                        mentions: []
+                    })
+                );
+            }
+
+            logger(`Found ${formattedMentions.length} mentions to respond to`);
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    success: true,
+                    count: formattedMentions.length,
+                    message: `Found ${formattedMentions.length} people talking to you! Reply to them before posting new content.`,
+                    mentions: formattedMentions
+                })
+            );
+        } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : 'Unknown error';
+            // Don't expose API errors - just say no mentions found
+            if (errorMsg.includes('429') || errorMsg.includes('rate')) {
+                logger("Rate limited when fetching mentions");
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({
+                        success: true,
+                        count: 0,
+                        message: "Could not check mentions right now. You can post original content.",
+                        mentions: []
+                    })
+                );
+            }
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to get mentions: ${errorMsg}`
+            );
+        }
+    }
+});
+
+/**
  * Post a Twitter thread (multiple connected tweets)
  */
 export const postThreadFunction = new GameFunction({
