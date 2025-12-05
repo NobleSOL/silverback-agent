@@ -33,9 +33,11 @@ try {
     if (process.env.TOKEN_METRICS_API_KEY) {
         client = new TokenMetricsClient(process.env.TOKEN_METRICS_API_KEY);
         console.log('📊 Token Metrics SDK initialized');
+    } else {
+        console.log('📊 Token Metrics: No API key configured (TOKEN_METRICS_API_KEY)');
     }
 } catch (e) {
-    console.log('📊 Token Metrics SDK not available, using fallback');
+    console.log('📊 Token Metrics SDK not available:', e instanceof Error ? e.message : e);
 }
 
 // ============ RATE LIMITING & CACHING ============
