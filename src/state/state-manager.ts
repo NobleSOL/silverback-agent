@@ -25,6 +25,27 @@ export class StateManager {
         this.db = new Database(DB_FILE);
         this.initializeDatabase();
         this.state = this.getDefaultState();
+
+        // Load persisted state from database
+        this.loadSync();
+    }
+
+    /**
+     * Synchronously load state on startup
+     */
+    private loadSync(): void {
+        try {
+            const stateRow = this.db.prepare('SELECT value FROM state WHERE key = ?').get('current_state');
+            if (stateRow) {
+                const loaded = JSON.parse((stateRow as any).value);
+                this.state = { ...this.getDefaultState(), ...loaded };
+                console.log(`📊 Loaded learning state: ${this.state.metrics.totalTrades} trades, ${(this.state.metrics.winRate * 100).toFixed(1)}% win rate`);
+            } else {
+                console.log(`📊 Starting fresh - no previous learning state found`);
+            }
+        } catch (e) {
+            console.log('📊 Starting fresh state (load error)');
+        }
     }
 
     private initializeDatabase(): void {

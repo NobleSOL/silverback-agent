@@ -146,19 +146,19 @@ export const sendTradeCallFunction = new GameFunction({
         try {
             const state = stateManager.getState();
 
-            // Only send trade calls if we have enough learning
-            if (state.metrics.totalTrades < 20) {
-                return new ExecutableGameFunctionResponse(
-                    ExecutableGameFunctionStatus.Failed,
-                    `Not enough learning yet (${state.metrics.totalTrades} trades). Need at least 20 trades before sending trade calls.`
-                );
-            }
+            // Log learning status but allow signals regardless
+            // The agent's confidence level will reflect its experience
+            const learningNote = state.metrics.totalTrades < 10
+                ? '⚠️ Early learning phase'
+                : state.metrics.totalTrades < 50
+                ? '📈 Building experience'
+                : '✅ Experienced';
 
             const direction = args.direction?.toUpperCase() || 'LONG';
             const directionEmoji = direction === 'LONG' ? '🟢' : '🔴';
 
             const message = `
-🎯 Trade Signal
+🎯 Trade Signal ${learningNote}
 ${args.asset} · ${directionEmoji} ${direction} · ⏱️ ${args.timeframe || '4h'}
 
 Entry: ${args.entry}
