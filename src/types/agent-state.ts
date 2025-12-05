@@ -32,6 +32,13 @@ export interface MarketConditions {
     trend: 'up' | 'down' | 'sideways';
 }
 
+export interface TokenMetricsSignal {
+    signal: 'LONG' | 'SHORT' | 'HOLD' | 'NONE';
+    confidence: number;
+    traderGrade: number;
+    aligned: boolean; // Did our trade align with TM signal?
+}
+
 export interface Trade {
     id: string;
     timestamp: string;
@@ -47,6 +54,7 @@ export interface Trade {
     pnl: number;
     marketConditions: MarketConditions;
     lessons: string[]; // What we learned from this trade
+    tmSignal?: TokenMetricsSignal; // Token Metrics signal at time of trade
 }
 
 export interface Insights {
@@ -55,6 +63,15 @@ export interface Insights {
     optimalMarketConditions: string;
     commonMistakes: string[];
     successPatterns: string[];
+    // Token Metrics signal tracking
+    tmSignalAccuracy?: {
+        totalSignals: number;
+        alignedTrades: number;
+        alignedWins: number;
+        nonAlignedWins: number;
+        alignedWinRate: number;  // Win rate when following TM signals
+        nonAlignedWinRate: number; // Win rate when NOT following TM signals
+    };
 }
 
 export interface SilverbackState {
