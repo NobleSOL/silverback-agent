@@ -93,6 +93,205 @@ export const analyzeForSignalFunction = new GameFunction({
 });
 
 /**
+ * Send a trade signal with clean professional format
+ */
+export const sendTradeCallFunction = new GameFunction({
+    name: "send_trade_call",
+    description: `Send a professional trade signal to Telegram. Use this when you identify a trading opportunity based on your analysis.
+
+    Format:
+    - Direction: LONG (expecting price up) or SHORT (expecting price down)
+    - Timeframe: How long you expect the trade to take
+    - Entry, Target, Stop prices
+
+    ONLY send when confidence is high based on your learning!`,
+    args: [
+        {
+            name: "asset",
+            description: "Trading pair (e.g., 'BTCUSDT', 'ETHUSDT', 'BONKUSDT')"
+        },
+        {
+            name: "direction",
+            description: "'LONG' or 'SHORT'"
+        },
+        {
+            name: "timeframe",
+            description: "Expected timeframe (e.g., '30m', '1h', '4h', '1d')"
+        },
+        {
+            name: "entry",
+            description: "Entry price"
+        },
+        {
+            name: "target",
+            description: "Target price (TP1)"
+        },
+        {
+            name: "stop",
+            description: "Stop loss price"
+        },
+        {
+            name: "notes",
+            description: "Brief analysis or reason for the trade (optional)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Telegram not configured"
+            );
+        }
+
+        try {
+            const state = stateManager.getState();
+
+            // Only send trade calls if we have enough learning
+            if (state.metrics.totalTrades < 20) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `Not enough learning yet (${state.metrics.totalTrades} trades). Need at least 20 trades before sending trade calls.`
+                );
+            }
+
+            const direction = args.direction?.toUpperCase() || 'LONG';
+            const directionEmoji = direction === 'LONG' ? '🟢' : '🔴';
+
+            const message = `
+🎯 Trade Signal
+${args.asset} · ${directionEmoji} ${direction} · ⏱️ ${args.timeframe || '4h'}
+
+Entry: ${args.entry}
+Target: ${args.target}
+Stop: ${args.stop}
+
+${args.notes || ''}
+
+📊 Win Rate: ${(state.metrics.winRate * 100).toFixed(0)}% | Trades: ${state.metrics.totalTrades}
+🦍 Silverback Intelligence
+            `.trim();
+
+            const response = await fetch(
+                `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: process.env.TELEGRAM_CHAT_ID,
+                        text: message,
+                        parse_mode: 'Markdown'
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Telegram API error: ${response.status}`);
+            }
+
+            logger(`Sent ${direction} trade call for ${args.asset} to Telegram`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                `Trade signal sent successfully`
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to send trade call: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Send take profit or trade update notification
+ */
+export const sendTradeUpdateFunction = new GameFunction({
+    name: "send_trade_update",
+    description: "Send a trade update (take profit hit, stop hit, or status update) to Telegram.",
+    args: [
+        {
+            name: "asset",
+            description: "Trading pair (e.g., 'BTCUSDT')"
+        },
+        {
+            name: "update_type",
+            description: "'TP1', 'TP2', 'TP3', 'STOP', 'UPDATE'"
+        },
+        {
+            name: "direction",
+            description: "'LONG' or 'SHORT'"
+        },
+        {
+            name: "entry",
+            description: "Original entry price"
+        },
+        {
+            name: "current",
+            description: "Current price"
+        },
+        {
+            name: "message",
+            description: "Update message (e.g., 'Take Some Profits', 'Stopped Out')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Telegram not configured"
+            );
+        }
+
+        try {
+            const direction = args.direction?.toUpperCase() || 'LONG';
+            const directionEmoji = direction === 'LONG' ? '🟢' : '🔴';
+            const updateType = args.update_type?.toUpperCase() || 'UPDATE';
+
+            let statusEmoji = '📊';
+            if (updateType.startsWith('TP')) statusEmoji = '🎯';
+            if (updateType === 'STOP') statusEmoji = '🛑';
+
+            const message = `
+${statusEmoji} ${updateType}  ${args.asset} · ${directionEmoji} ${direction}
+Entry: ${args.entry}
+Now: ${args.current}
+
+${args.message || ''}
+            `.trim();
+
+            const response = await fetch(
+                `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: process.env.TELEGRAM_CHAT_ID,
+                        text: message
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Telegram API error: ${response.status}`);
+            }
+
+            logger(`Sent ${updateType} update for ${args.asset} to Telegram`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                `Trade update sent successfully`
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to send trade update: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
  * Send a market alert based on significant price movements
  */
 export const sendMarketAlertFunction = new GameFunction({
@@ -376,8 +575,11 @@ Remember: Your Telegram subscribers trust you. Only send signals you believe in 
         getMarketOverviewFunction,     // BTC, ETH overview
         getTrendingCoinsFunction,      // What's trending
         getFearGreedIndexFunction,     // Sentiment indicator
-        // Signal sending
-        sendMarketAlertFunction,       // Send market alerts
+        // Trade signals (professional format)
+        sendTradeCallFunction,         // Send trade entry signal
+        sendTradeUpdateFunction,       // Send TP/Stop/Update notifications
+        // Other alerts
+        sendMarketAlertFunction,       // Send market alerts (pumps/dumps)
         sendDailySummaryFunction,      // Send daily summary
         sendTradingSignalFunction,     // Generic signal function
         sendPerformanceUpdateFunction  // Performance updates
