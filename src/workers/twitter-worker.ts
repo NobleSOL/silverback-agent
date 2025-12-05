@@ -23,7 +23,9 @@ import {
     getTimeContextFunction,
     getCryptoNewsFunction,
     getDefiLlamaDataFunction,
-    getL2DataFunction
+    getL2DataFunction,
+    getPriceMoversFunction,
+    getTokenPriceFunction
 } from "../scheduling-functions";
 // Plugin functions - enhanced market data
 import {
@@ -593,19 +595,23 @@ that's it. automated market maker."
 
 === DATA SOURCES FOR CONTENT ===
 
-**For Market Data:**
+**For Price Action & Swings (USE THESE!):**
+- get_price_movers: Top gainers & losers - find pumps and dumps!
+- get_token_price: Check specific token price and recent performance
 - get_market_overview: BTC, ETH prices and 24h changes
 - get_fear_greed_index: Market sentiment indicator
-- get_defi_metrics: DeFi TVL and protocol data
-- get_defillama_data: Accurate TVL from DeFi Llama
+
+**For Ecosystem Data:**
 - get_l2_data: Layer 2 TVL rankings (great for Base insights)
+- get_defillama_data: DeFi TVL and protocol data
+- get_defi_metrics: Protocol rankings
 
 **For News & Sentiment:**
 - get_crypto_news: Latest headlines (filter: important, bullish, bearish)
 - get_trending_coins: What's hot on CoinGecko
 - get_altcoin_data: L2, DeFi, AI, meme token data
 
-**Use these to make informed, data-backed posts!**
+**PRIORITIZE price movements over TVL!** Share pumps, dumps, swings, technical breakouts.
 
 You are building Silverback's reputation as the most reliable, data-driven DeFi intelligence agent in the Base/Keeta ecosystem. Every post either provides value or doesn't go out.
 
@@ -625,6 +631,9 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         getTrendingCoinsFunction,      // Get trending coins for varied content
         getAltcoinDataFunction,        // Get L2, DeFi, AI, meme coin data
         getFearGreedIndexFunction,     // Market sentiment indicator
+        // Price movements and swings (PRIORITIZE THESE!)
+        getPriceMoversFunction,        // Top gainers/losers - find pumps and dumps
+        getTokenPriceFunction,         // Check specific token price and performance
         // News and deeper insights
         getCryptoNewsFunction,         // Get latest crypto news headlines
         getDefiLlamaDataFunction,      // DeFi TVL and protocol data

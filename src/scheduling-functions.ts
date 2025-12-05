@@ -340,3 +340,187 @@ export const getL2DataFunction = new GameFunction({
         }
     }
 });
+
+/**
+ * Get biggest price movers - tokens with significant price swings
+ */
+export const getPriceMoversFunction = new GameFunction({
+    name: "get_price_movers",
+    description: "Get tokens with biggest price movements in last 24h. Great for finding trading opportunities and market narratives. Returns top gainers and losers.",
+    args: [
+        {
+            name: "category",
+            description: "Filter by: 'all', 'defi', 'layer-1', 'layer-2', 'meme-token', 'ai-big-data'. Default: 'all'"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            const category = args.category || 'all';
+            logger(`Fetching price movers (category: ${category})...`);
+
+            // Use CoinGecko's markets endpoint sorted by price change
+            let url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=price_change_percentage_24h_desc&per_page=100&sparkline=false&price_change_percentage=1h,24h,7d';
+
+            if (category !== 'all') {
+                url += `&category=${category}`;
+            }
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`CoinGecko API error: ${response.status}`);
+            }
+
+            const coins = await response.json();
+
+            // Get top gainers (positive change)
+            const gainers = coins
+                .filter((c: any) => c.price_change_percentage_24h > 0)
+                .slice(0, 10)
+                .map((c: any) => ({
+                    symbol: c.symbol.toUpperCase(),
+                    name: c.name,
+                    price: `$${c.current_price < 0.01 ? c.current_price.toFixed(6) : c.current_price.toFixed(2)}`,
+                    change_1h: c.price_change_percentage_1h_in_currency ? `${c.price_change_percentage_1h_in_currency > 0 ? '+' : ''}${c.price_change_percentage_1h_in_currency.toFixed(1)}%` : 'N/A',
+                    change_24h: `+${c.price_change_percentage_24h.toFixed(1)}%`,
+                    change_7d: c.price_change_percentage_7d_in_currency ? `${c.price_change_percentage_7d_in_currency > 0 ? '+' : ''}${c.price_change_percentage_7d_in_currency.toFixed(1)}%` : 'N/A',
+                    volume_24h: `$${(c.total_volume / 1e6).toFixed(1)}M`,
+                    market_cap: `$${(c.market_cap / 1e9).toFixed(2)}B`
+                }));
+
+            // Get top losers (negative change)
+            const losers = coins
+                .filter((c: any) => c.price_change_percentage_24h < 0)
+                .sort((a: any, b: any) => a.price_change_percentage_24h - b.price_change_percentage_24h)
+                .slice(0, 10)
+                .map((c: any) => ({
+                    symbol: c.symbol.toUpperCase(),
+                    name: c.name,
+                    price: `$${c.current_price < 0.01 ? c.current_price.toFixed(6) : c.current_price.toFixed(2)}`,
+                    change_1h: c.price_change_percentage_1h_in_currency ? `${c.price_change_percentage_1h_in_currency > 0 ? '+' : ''}${c.price_change_percentage_1h_in_currency.toFixed(1)}%` : 'N/A',
+                    change_24h: `${c.price_change_percentage_24h.toFixed(1)}%`,
+                    change_7d: c.price_change_percentage_7d_in_currency ? `${c.price_change_percentage_7d_in_currency > 0 ? '+' : ''}${c.price_change_percentage_7d_in_currency.toFixed(1)}%` : 'N/A',
+                    volume_24h: `$${(c.total_volume / 1e6).toFixed(1)}M`,
+                    market_cap: `$${(c.market_cap / 1e9).toFixed(2)}B`
+                }));
+
+            // Find notable swings (big moves in either direction)
+            const bigSwings = coins
+                .filter((c: any) => Math.abs(c.price_change_percentage_24h) > 10)
+                .slice(0, 5)
+                .map((c: any) => ({
+                    symbol: c.symbol.toUpperCase(),
+                    change_24h: `${c.price_change_percentage_24h > 0 ? '+' : ''}${c.price_change_percentage_24h.toFixed(1)}%`,
+                    direction: c.price_change_percentage_24h > 0 ? 'PUMP' : 'DUMP'
+                }));
+
+            logger(`Found ${gainers.length} gainers, ${losers.length} losers, ${bigSwings.length} big swings`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    success: true,
+                    category: category,
+                    summary: {
+                        top_gainer: gainers[0] ? `${gainers[0].symbol} ${gainers[0].change_24h}` : 'N/A',
+                        top_loser: losers[0] ? `${losers[0].symbol} ${losers[0].change_24h}` : 'N/A',
+                        big_swings: bigSwings.length
+                    },
+                    gainers: gainers,
+                    losers: losers,
+                    big_swings: bigSwings,
+                    insight: bigSwings.length > 0 ?
+                        `Notable swings: ${bigSwings.map((s: any) => `${s.symbol} ${s.change_24h}`).join(', ')}` :
+                        'No major swings (>10%) in the last 24h'
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch price movers: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get specific token price and recent performance
+ */
+export const getTokenPriceFunction = new GameFunction({
+    name: "get_token_price",
+    description: "Get current price and recent performance for a specific token. Use this to check specific coins mentioned in news or community discussions.",
+    args: [
+        {
+            name: "token_id",
+            description: "CoinGecko token ID (e.g., 'bitcoin', 'ethereum', 'solana', 'pepe', 'bonk')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            if (!args.token_id) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    "Token ID is required (e.g., 'bitcoin', 'ethereum', 'solana')"
+                );
+            }
+
+            const tokenId = args.token_id.toLowerCase();
+            logger(`Fetching price for ${tokenId}...`);
+
+            const response = await fetch(
+                `https://api.coingecko.com/api/v3/coins/${tokenId}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`
+            );
+
+            if (!response.ok) {
+                if (response.status === 404) {
+                    return new ExecutableGameFunctionResponse(
+                        ExecutableGameFunctionStatus.Failed,
+                        `Token '${tokenId}' not found. Try the full CoinGecko ID (e.g., 'bitcoin', 'ethereum', 'solana').`
+                    );
+                }
+                throw new Error(`API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const price = data.market_data.current_price.usd;
+            const change1h = data.market_data.price_change_percentage_1h_in_currency?.usd;
+            const change24h = data.market_data.price_change_percentage_24h;
+            const change7d = data.market_data.price_change_percentage_7d;
+            const change30d = data.market_data.price_change_percentage_30d;
+            const ath = data.market_data.ath.usd;
+            const athChange = data.market_data.ath_change_percentage.usd;
+
+            logger(`${data.symbol.toUpperCase()}: $${price} (${change24h > 0 ? '+' : ''}${change24h?.toFixed(1)}% 24h)`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    success: true,
+                    token: {
+                        id: data.id,
+                        symbol: data.symbol.toUpperCase(),
+                        name: data.name,
+                        price: `$${price < 0.01 ? price.toFixed(8) : price.toFixed(2)}`,
+                        price_raw: price,
+                        change_1h: change1h ? `${change1h > 0 ? '+' : ''}${change1h.toFixed(1)}%` : 'N/A',
+                        change_24h: `${change24h > 0 ? '+' : ''}${change24h?.toFixed(1)}%`,
+                        change_7d: `${change7d > 0 ? '+' : ''}${change7d?.toFixed(1)}%`,
+                        change_30d: `${change30d > 0 ? '+' : ''}${change30d?.toFixed(1)}%`,
+                        ath: `$${ath < 0.01 ? ath.toFixed(8) : ath.toFixed(2)}`,
+                        ath_change: `${athChange?.toFixed(1)}%`,
+                        market_cap: `$${(data.market_data.market_cap.usd / 1e9).toFixed(2)}B`,
+                        volume_24h: `$${(data.market_data.total_volume.usd / 1e6).toFixed(1)}M`,
+                        market_cap_rank: data.market_cap_rank
+                    },
+                    insight: Math.abs(change24h) > 5 ?
+                        `${data.symbol.toUpperCase()} ${change24h > 0 ? 'pumping' : 'dumping'} ${Math.abs(change24h).toFixed(1)}% in 24h` :
+                        `${data.symbol.toUpperCase()} relatively flat (${change24h > 0 ? '+' : ''}${change24h?.toFixed(1)}% 24h)`
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch token price: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
