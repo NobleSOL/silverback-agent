@@ -146,19 +146,29 @@ export const sendTradeCallFunction = new GameFunction({
         try {
             const state = stateManager.getState();
 
-            // Log learning status but allow signals regardless
-            // The agent's confidence level will reflect its experience
-            const learningNote = state.metrics.totalTrades < 10
-                ? '⚠️ Early learning phase'
-                : state.metrics.totalTrades < 50
-                ? '📈 Building experience'
-                : '✅ Experienced';
+            // Only send trade calls once we've achieved target win rate
+            const MIN_TRADES = 50;
+            const MIN_WIN_RATE = 0.70;
+
+            if (state.metrics.totalTrades < MIN_TRADES) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `Still learning: ${state.metrics.totalTrades}/${MIN_TRADES} trades completed. Need more paper trading experience before sending signals.`
+                );
+            }
+
+            if (state.metrics.winRate < MIN_WIN_RATE) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    `Win rate ${(state.metrics.winRate * 100).toFixed(1)}% below ${MIN_WIN_RATE * 100}% target. Continuing to learn and improve before sending signals.`
+                );
+            }
 
             const direction = args.direction?.toUpperCase() || 'LONG';
             const directionEmoji = direction === 'LONG' ? '🟢' : '🔴';
 
             const message = `
-🎯 Trade Signal ${learningNote}
+🎯 Trade Signal ✅
 ${args.asset} · ${directionEmoji} ${direction} · ⏱️ ${args.timeframe || '4h'}
 
 Entry: ${args.entry}
