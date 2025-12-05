@@ -1,5 +1,5 @@
 /**
- * TokenMetrics API Integration (Official SDK)
+ * TokenMetrics API Integration (REST API)
  * Provides AI-powered trading signals, grades, and analytics
  *
  * Features (from their 70% win rate signals):
@@ -9,9 +9,8 @@
  * - Price Predictions
  * - Resistance/Support Levels
  * - Market Sentiment
- * - OHLCV Historical Data
  *
- * SDK Docs: https://github.com/token-metrics/tmai-api
+ * API Docs: https://developers.tokenmetrics.com/
  */
 
 import {
@@ -23,21 +22,47 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Import the official SDK
-let TokenMetricsClient: any;
-let client: any;
+// ============ REST API CLIENT ============
+const API_BASE_URL = 'https://api.tokenmetrics.com/v2';
+const API_KEY = process.env.TOKEN_METRICS_API_KEY;
 
-try {
-    const tmaiApi = require('tmai-api');
-    TokenMetricsClient = tmaiApi.TokenMetricsClient;
-    if (process.env.TOKEN_METRICS_API_KEY) {
-        client = new TokenMetricsClient(process.env.TOKEN_METRICS_API_KEY);
-        console.log('📊 Token Metrics SDK initialized');
-    } else {
-        console.log('📊 Token Metrics: No API key configured (TOKEN_METRICS_API_KEY)');
+// Log initialization status
+if (API_KEY) {
+    console.log('📊 Token Metrics REST API initialized');
+} else {
+    console.log('📊 Token Metrics: No API key configured (TOKEN_METRICS_API_KEY)');
+}
+
+/**
+ * Make authenticated API request to Token Metrics
+ */
+async function tmApiRequest(endpoint: string, params: Record<string, any> = {}): Promise<any> {
+    if (!API_KEY) {
+        throw new Error('TOKEN_METRICS_API_KEY not configured');
     }
-} catch (e) {
-    console.log('📊 Token Metrics SDK not available:', e instanceof Error ? e.message : e);
+
+    const url = new URL(`${API_BASE_URL}${endpoint}`);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+            url.searchParams.append(key, String(value));
+        }
+    });
+
+    const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+            'accept': 'application/json',
+            'api_key': API_KEY
+        }
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Token Metrics API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.data || data;
 }
 
 // ============ RATE LIMITING & CACHING ============
@@ -104,7 +129,7 @@ export function getApiUsageStats(): { callsToday: number; remaining: number; dai
  * Check if TokenMetrics API is available
  */
 export function isTokenMetricsAvailable(): boolean {
-    return !!process.env.TOKEN_METRICS_API_KEY && !!client;
+    return !!API_KEY;
 }
 
 /**
@@ -153,17 +178,17 @@ export const getAITradingSignalsFunction = new GameFunction({
         try {
             logger(`Fetching AI trading signals${args.symbol ? ` for ${args.symbol}` : ''}...`);
 
-            const params: any = { limit: 20 };
+            const params: Record<string, any> = { limit: 20 };
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await client.tradingSignals.get(params);
-            trackApiCall('tradingSignals');
+            const data = await tmApiRequest('/trading-signals', params);
+            trackApiCall('trading-signals');
 
-            const signals = (data || []).slice(0, 15).map((s: any) => ({
-                symbol: s.TOKEN_SYMBOL || s.symbol,
+            const signals = (Array.isArray(data) ? data : []).slice(0, 15).map((s: any) => ({
+                symbol: s.TOKEN_SYMBOL || s.token_symbol || s.symbol,
                 signal: s.SIGNAL || s.signal, // LONG or SHORT
-                confidence: s.SIGNAL_STRENGTH || s.confidence,
-                grade: s.TM_TRADER_GRADE || s.grade,
+                confidence: s.SIGNAL_STRENGTH || s.signal_strength || s.confidence,
+                grade: s.TM_TRADER_GRADE || s.tm_trader_grade || s.grade,
                 price: s.PRICE || s.price,
                 date: s.DATE || s.date
             }));
@@ -180,7 +205,7 @@ export const getAITradingSignalsFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_ai", ...result })
+                JSON.stringify({ source: "tokenmetrics_api", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -245,26 +270,27 @@ export const getTokenGradesFunction = new GameFunction({
         try {
             logger(`Fetching grades for ${args.symbol}...`);
 
-            const data = await client.traderGrades.get({ symbol: args.symbol.toUpperCase() });
-            trackApiCall('traderGrades');
+            const data = await tmApiRequest('/trader-grades', { symbol: args.symbol.toUpperCase() });
+            trackApiCall('trader-grades');
 
-            const token = data?.[0];
-            if (!token) {
+            const tokenData = Array.isArray(data) ? data[0] : data;
+            if (!tokenData) {
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Done,
                     JSON.stringify({ symbol: args.symbol, note: "No grade data found" })
                 );
             }
 
+            const traderGrade = tokenData.TM_TRADER_GRADE || tokenData.tm_trader_grade || tokenData.traderGrade || 0;
             const result = {
                 symbol: args.symbol.toUpperCase(),
-                traderGrade: token.TM_TRADER_GRADE || token.traderGrade,
-                investorGrade: token.TM_INVESTOR_GRADE || token.investorGrade,
-                technologyGrade: token.TECHNOLOGY_GRADE || token.technologyGrade,
-                price: token.PRICE || token.price,
-                recommendation: (token.TM_TRADER_GRADE || 0) >= 70 ? 'STRONG_BUY' :
-                    (token.TM_TRADER_GRADE || 0) >= 50 ? 'BUY' :
-                    (token.TM_TRADER_GRADE || 0) >= 30 ? 'HOLD' : 'AVOID',
+                traderGrade: traderGrade,
+                investorGrade: tokenData.TM_INVESTOR_GRADE || tokenData.tm_investor_grade || tokenData.investorGrade,
+                technologyGrade: tokenData.TECHNOLOGY_GRADE || tokenData.technology_grade || tokenData.technologyGrade,
+                price: tokenData.PRICE || tokenData.price,
+                recommendation: traderGrade >= 70 ? 'STRONG_BUY' :
+                    traderGrade >= 50 ? 'BUY' :
+                    traderGrade >= 30 ? 'HOLD' : 'AVOID',
                 timestamp: new Date().toISOString()
             };
 
@@ -273,7 +299,7 @@ export const getTokenGradesFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_ai", ...result })
+                JSON.stringify({ source: "tokenmetrics_api", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -336,10 +362,10 @@ export const getResistanceSupportFunction = new GameFunction({
         try {
             logger(`Fetching support/resistance for ${args.symbol}...`);
 
-            const data = await client.resistanceSupport.get({ symbol: args.symbol.toUpperCase() });
-            trackApiCall('resistanceSupport');
+            const data = await tmApiRequest('/resistance-support', { symbol: args.symbol.toUpperCase() });
+            trackApiCall('resistance-support');
 
-            const levels = data?.[0];
+            const levels = Array.isArray(data) ? data[0] : data;
             if (!levels) {
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Done,
@@ -351,14 +377,14 @@ export const getResistanceSupportFunction = new GameFunction({
                 symbol: args.symbol.toUpperCase(),
                 currentPrice: levels.PRICE || levels.price,
                 resistance: {
-                    r1: levels.RESISTANCE_1 || levels.resistance1,
-                    r2: levels.RESISTANCE_2 || levels.resistance2,
-                    r3: levels.RESISTANCE_3 || levels.resistance3
+                    r1: levels.RESISTANCE_1 || levels.resistance_1 || levels.resistance1,
+                    r2: levels.RESISTANCE_2 || levels.resistance_2 || levels.resistance2,
+                    r3: levels.RESISTANCE_3 || levels.resistance_3 || levels.resistance3
                 },
                 support: {
-                    s1: levels.SUPPORT_1 || levels.support1,
-                    s2: levels.SUPPORT_2 || levels.support2,
-                    s3: levels.SUPPORT_3 || levels.support3
+                    s1: levels.SUPPORT_1 || levels.support_1 || levels.support1,
+                    s2: levels.SUPPORT_2 || levels.support_2 || levels.support2,
+                    s3: levels.SUPPORT_3 || levels.support_3 || levels.support3
                 },
                 timestamp: new Date().toISOString()
             };
@@ -368,7 +394,7 @@ export const getResistanceSupportFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_ai", ...result })
+                JSON.stringify({ source: "tokenmetrics_api", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -418,16 +444,17 @@ export const getPricePredictionsFunction = new GameFunction({
         try {
             logger(`Fetching price predictions${args.symbol ? ` for ${args.symbol}` : ''}...`);
 
-            const params: any = { limit: 10 };
+            const params: Record<string, any> = { limit: 10 };
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await client.pricePredictions.get(params);
-            trackApiCall('pricePredictions');
+            const data = await tmApiRequest('/price-prediction', params);
+            trackApiCall('price-prediction');
 
-            const predictions = (data || []).map((p: any) => ({
-                symbol: p.TOKEN_SYMBOL || p.symbol,
-                currentPrice: p.CURRENT_PRICE || p.currentPrice,
-                predictedPrice: p.PREDICTED_PRICE || p.predictedPrice,
+            const predictionData = Array.isArray(data) ? data : [];
+            const predictions = predictionData.map((p: any) => ({
+                symbol: p.TOKEN_SYMBOL || p.token_symbol || p.symbol,
+                currentPrice: p.CURRENT_PRICE || p.current_price || p.currentPrice,
+                predictedPrice: p.PREDICTED_PRICE || p.predicted_price || p.predictedPrice,
                 confidence: p.CONFIDENCE || p.confidence,
                 timeframe: p.TIMEFRAME || p.timeframe,
                 potential: p.PREDICTED_PRICE && p.CURRENT_PRICE
@@ -440,7 +467,7 @@ export const getPricePredictionsFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_ai", ...result })
+                JSON.stringify({ source: "tokenmetrics_api", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -485,15 +512,16 @@ export const getMarketSentimentFunction = new GameFunction({
         try {
             logger('Fetching market sentiment...');
 
-            const data = await client.sentiments.get({ limit: 10 });
+            const data = await tmApiRequest('/sentiments', { limit: 10 });
             trackApiCall('sentiments');
 
-            const sentiments = (data || []).map((s: any) => ({
-                symbol: s.TOKEN_SYMBOL || s.symbol,
-                score: s.SENTIMENT_SCORE || s.sentimentScore,
-                social: s.SOCIAL_SCORE || s.socialScore,
-                mood: (s.SENTIMENT_SCORE || 0) >= 60 ? 'bullish' :
-                    (s.SENTIMENT_SCORE || 0) >= 40 ? 'neutral' : 'bearish'
+            const sentimentData = Array.isArray(data) ? data : [];
+            const sentiments = sentimentData.map((s: any) => ({
+                symbol: s.TOKEN_SYMBOL || s.token_symbol || s.symbol,
+                score: s.SENTIMENT_SCORE || s.sentiment_score || s.sentimentScore,
+                social: s.SOCIAL_SCORE || s.social_score || s.socialScore,
+                mood: (s.SENTIMENT_SCORE || s.sentiment_score || 0) >= 60 ? 'bullish' :
+                    (s.SENTIMENT_SCORE || s.sentiment_score || 0) >= 40 ? 'neutral' : 'bearish'
             }));
 
             const result = { sentiments, timestamp: new Date().toISOString() };
@@ -501,7 +529,7 @@ export const getMarketSentimentFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_ai", ...result })
+                JSON.stringify({ source: "tokenmetrics_api", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -531,7 +559,8 @@ export const getApiUsageFunction = new GameFunction({
                 dailyLimit: stats.dailyLimit,
                 monthlyLimit: 500,
                 cacheEntries: cache.size,
-                cacheDurationHours: CACHE_DURATION / (60 * 60 * 1000)
+                cacheDurationHours: CACHE_DURATION / (60 * 60 * 1000),
+                apiAvailable: isTokenMetricsAvailable()
             })
         );
     }
