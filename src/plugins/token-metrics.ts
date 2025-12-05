@@ -1,16 +1,16 @@
 /**
- * TokenMetrics API Integration (REST API)
+ * TokenMetrics API Integration (Official SDK)
  * Provides AI-powered trading signals, grades, and analytics
  *
  * Features (from their 70% win rate signals):
  * - AI Trading Signals (long/short with confidence)
- * - Trader & Investor Grades
- * - Technical Analysis Grades
+ * - TM Grades (Trader & Investor grades)
+ * - Hourly Trading Signals
  * - Price Predictions
  * - Resistance/Support Levels
- * - Market Sentiment
+ * - AI Agent for market insights
  *
- * API Docs: https://developers.tokenmetrics.com/
+ * SDK Docs: https://www.npmjs.com/package/tmai-api
  */
 
 import {
@@ -18,51 +18,24 @@ import {
     ExecutableGameFunctionResponse,
     ExecutableGameFunctionStatus,
 } from "@virtuals-protocol/game";
+import { TokenMetricsClient } from 'tmai-api';
 import dotenv from "dotenv";
 
 dotenv.config();
 
-// ============ REST API CLIENT ============
-const API_BASE_URL = 'https://api.tokenmetrics.com/v2';
+// ============ SDK CLIENT INITIALIZATION ============
 const API_KEY = process.env.TOKEN_METRICS_API_KEY;
+let client: TokenMetricsClient | null = null;
 
-// Log initialization status
 if (API_KEY) {
-    console.log('📊 Token Metrics REST API initialized');
+    try {
+        client = new TokenMetricsClient(API_KEY);
+        console.log('📊 Token Metrics SDK initialized');
+    } catch (e) {
+        console.log('📊 Token Metrics SDK init error:', e instanceof Error ? e.message : e);
+    }
 } else {
     console.log('📊 Token Metrics: No API key configured (TOKEN_METRICS_API_KEY)');
-}
-
-/**
- * Make authenticated API request to Token Metrics
- */
-async function tmApiRequest(endpoint: string, params: Record<string, any> = {}): Promise<any> {
-    if (!API_KEY) {
-        throw new Error('TOKEN_METRICS_API_KEY not configured');
-    }
-
-    const url = new URL(`${API_BASE_URL}${endpoint}`);
-    Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-            url.searchParams.append(key, String(value));
-        }
-    });
-
-    const response = await fetch(url.toString(), {
-        method: 'GET',
-        headers: {
-            'accept': 'application/json',
-            'api_key': API_KEY
-        }
-    });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Token Metrics API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data.data || data;
 }
 
 // ============ RATE LIMITING & CACHING ============
@@ -129,7 +102,7 @@ export function getApiUsageStats(): { callsToday: number; remaining: number; dai
  * Check if TokenMetrics API is available
  */
 export function isTokenMetricsAvailable(): boolean {
-    return !!API_KEY;
+    return !!API_KEY && !!client;
 }
 
 /**
@@ -147,7 +120,7 @@ export const getAITradingSignalsFunction = new GameFunction({
         }
     ] as const,
     executable: async (args, logger) => {
-        if (!isTokenMetricsAvailable()) {
+        if (!isTokenMetricsAvailable() || !client) {
             logger("TokenMetrics API not configured - using fallback");
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -178,13 +151,14 @@ export const getAITradingSignalsFunction = new GameFunction({
         try {
             logger(`Fetching AI trading signals${args.symbol ? ` for ${args.symbol}` : ''}...`);
 
-            const params: Record<string, any> = { limit: 20 };
+            const params: any = { limit: 20 };
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await tmApiRequest('/trading-signals', params);
-            trackApiCall('trading-signals');
+            const data = await client.tradingSignals.get(params);
+            trackApiCall('tradingSignals');
 
-            const signals = (Array.isArray(data) ? data : []).slice(0, 15).map((s: any) => ({
+            const signalData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const signals = signalData.slice(0, 15).map((s: any) => ({
                 symbol: s.TOKEN_SYMBOL || s.token_symbol || s.symbol,
                 signal: s.SIGNAL || s.signal, // LONG or SHORT
                 confidence: s.SIGNAL_STRENGTH || s.signal_strength || s.confidence,
@@ -195,8 +169,8 @@ export const getAITradingSignalsFunction = new GameFunction({
 
             const result = {
                 signals,
-                bullish: signals.filter((s: any) => s.signal === 'LONG' || s.signal === 'BUY').length,
-                bearish: signals.filter((s: any) => s.signal === 'SHORT' || s.signal === 'SELL').length,
+                bullish: signals.filter((s: any) => s.signal === 'LONG' || s.signal === 'BUY' || s.signal === 1).length,
+                bearish: signals.filter((s: any) => s.signal === 'SHORT' || s.signal === 'SELL' || s.signal === -1).length,
                 timestamp: new Date().toISOString()
             };
 
@@ -205,7 +179,7 @@ export const getAITradingSignalsFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_api", ...result })
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -217,14 +191,14 @@ export const getAITradingSignalsFunction = new GameFunction({
 });
 
 /**
- * Get Trader Grades - AI grades optimized for short-term trading
+ * Get TM Grades - AI grades for trading
  */
 export const getTokenGradesFunction = new GameFunction({
     name: "get_token_grades",
     description: `Get Token Metrics AI grades for a token. Includes:
-    - Trader Grade (short-term trading potential)
-    - Investor Grade (long-term holding potential)
-    - Technology Grade (tech fundamentals)
+    - TM Grade (overall trading potential)
+    - Fundamental Grade
+    - Momentum indicators
 
     Grades from 0-100. Higher = better opportunity.`,
     args: [
@@ -241,7 +215,7 @@ export const getTokenGradesFunction = new GameFunction({
             );
         }
 
-        if (!isTokenMetricsAvailable()) {
+        if (!isTokenMetricsAvailable() || !client) {
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
                 JSON.stringify({
@@ -268,38 +242,39 @@ export const getTokenGradesFunction = new GameFunction({
         }
 
         try {
-            logger(`Fetching grades for ${args.symbol}...`);
+            logger(`Fetching TM grades for ${args.symbol}...`);
 
-            const data = await tmApiRequest('/trader-grades', { symbol: args.symbol.toUpperCase() });
-            trackApiCall('trader-grades');
+            const data = await client.tmGrades.get({ symbol: args.symbol.toUpperCase() });
+            trackApiCall('tmGrades');
 
-            const tokenData = Array.isArray(data) ? data[0] : data;
-            if (!tokenData) {
+            const gradeData = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
+            if (!gradeData) {
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Done,
                     JSON.stringify({ symbol: args.symbol, note: "No grade data found" })
                 );
             }
 
-            const traderGrade = tokenData.TM_TRADER_GRADE || tokenData.tm_trader_grade || tokenData.traderGrade || 0;
+            const tmGrade = gradeData.TM_GRADE || gradeData.tm_grade || gradeData.grade || 0;
             const result = {
                 symbol: args.symbol.toUpperCase(),
-                traderGrade: traderGrade,
-                investorGrade: tokenData.TM_INVESTOR_GRADE || tokenData.tm_investor_grade || tokenData.investorGrade,
-                technologyGrade: tokenData.TECHNOLOGY_GRADE || tokenData.technology_grade || tokenData.technologyGrade,
-                price: tokenData.PRICE || tokenData.price,
-                recommendation: traderGrade >= 70 ? 'STRONG_BUY' :
-                    traderGrade >= 50 ? 'BUY' :
-                    traderGrade >= 30 ? 'HOLD' : 'AVOID',
+                tmGrade: tmGrade,
+                fundamentalGrade: gradeData.FUNDAMENTAL_GRADE || gradeData.fundamental_grade,
+                signal: gradeData.SIGNAL || gradeData.signal,
+                momentum: gradeData.MOMENTUM || gradeData.momentum,
+                price: gradeData.PRICE || gradeData.price,
+                recommendation: tmGrade >= 70 ? 'STRONG_BUY' :
+                    tmGrade >= 50 ? 'BUY' :
+                    tmGrade >= 30 ? 'HOLD' : 'AVOID',
                 timestamp: new Date().toISOString()
             };
 
             setCache(cacheKey, result);
-            logger(`${args.symbol}: Trader Grade ${result.traderGrade}, Rec: ${result.recommendation}`);
+            logger(`${args.symbol}: TM Grade ${result.tmGrade}, Rec: ${result.recommendation}`);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_api", ...result })
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -333,7 +308,7 @@ export const getResistanceSupportFunction = new GameFunction({
             );
         }
 
-        if (!isTokenMetricsAvailable()) {
+        if (!isTokenMetricsAvailable() || !client) {
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
                 JSON.stringify({
@@ -362,10 +337,10 @@ export const getResistanceSupportFunction = new GameFunction({
         try {
             logger(`Fetching support/resistance for ${args.symbol}...`);
 
-            const data = await tmApiRequest('/resistance-support', { symbol: args.symbol.toUpperCase() });
-            trackApiCall('resistance-support');
+            const data = await client.resistanceSupport.get({ symbol: args.symbol.toUpperCase() });
+            trackApiCall('resistanceSupport');
 
-            const levels = Array.isArray(data) ? data[0] : data;
+            const levels = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
             if (!levels) {
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Done,
@@ -377,14 +352,14 @@ export const getResistanceSupportFunction = new GameFunction({
                 symbol: args.symbol.toUpperCase(),
                 currentPrice: levels.PRICE || levels.price,
                 resistance: {
-                    r1: levels.RESISTANCE_1 || levels.resistance_1 || levels.resistance1,
-                    r2: levels.RESISTANCE_2 || levels.resistance_2 || levels.resistance2,
-                    r3: levels.RESISTANCE_3 || levels.resistance_3 || levels.resistance3
+                    r1: levels.RESISTANCE_1 || levels.resistance_1,
+                    r2: levels.RESISTANCE_2 || levels.resistance_2,
+                    r3: levels.RESISTANCE_3 || levels.resistance_3
                 },
                 support: {
-                    s1: levels.SUPPORT_1 || levels.support_1 || levels.support1,
-                    s2: levels.SUPPORT_2 || levels.support_2 || levels.support2,
-                    s3: levels.SUPPORT_3 || levels.support_3 || levels.support3
+                    s1: levels.SUPPORT_1 || levels.support_1,
+                    s2: levels.SUPPORT_2 || levels.support_2,
+                    s3: levels.SUPPORT_3 || levels.support_3
                 },
                 timestamp: new Date().toISOString()
             };
@@ -394,7 +369,7 @@ export const getResistanceSupportFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_api", ...result })
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
@@ -418,7 +393,7 @@ export const getPricePredictionsFunction = new GameFunction({
         }
     ] as const,
     executable: async (args, logger) => {
-        if (!isTokenMetricsAvailable()) {
+        if (!isTokenMetricsAvailable() || !client) {
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
                 JSON.stringify({ note: "Configure TOKEN_METRICS_API_KEY for price predictions" })
@@ -444,19 +419,19 @@ export const getPricePredictionsFunction = new GameFunction({
         try {
             logger(`Fetching price predictions${args.symbol ? ` for ${args.symbol}` : ''}...`);
 
-            const params: Record<string, any> = { limit: 10 };
+            const params: any = {};
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await tmApiRequest('/price-prediction', params);
-            trackApiCall('price-prediction');
+            const data = await client.pricePrediction.get(params);
+            trackApiCall('pricePrediction');
 
-            const predictionData = Array.isArray(data) ? data : [];
+            const predictionData = Array.isArray(data) ? data : (data as any)?.data || [];
             const predictions = predictionData.map((p: any) => ({
                 symbol: p.TOKEN_SYMBOL || p.token_symbol || p.symbol,
-                currentPrice: p.CURRENT_PRICE || p.current_price || p.currentPrice,
-                predictedPrice: p.PREDICTED_PRICE || p.predicted_price || p.predictedPrice,
-                confidence: p.CONFIDENCE || p.confidence,
-                timeframe: p.TIMEFRAME || p.timeframe,
+                currentPrice: p.CURRENT_PRICE || p.current_price,
+                predictedPrice: p.PREDICTED_PRICE || p.predicted_price,
+                bullScenario: p.BULL_SCENARIO || p.bull_scenario,
+                bearScenario: p.BEAR_SCENARIO || p.bear_scenario,
                 potential: p.PREDICTED_PRICE && p.CURRENT_PRICE
                     ? (((p.PREDICTED_PRICE - p.CURRENT_PRICE) / p.CURRENT_PRICE) * 100).toFixed(1) + '%'
                     : 'N/A'
@@ -467,12 +442,215 @@ export const getPricePredictionsFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_api", ...result })
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Failed,
                 `Failed to fetch predictions: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Hourly Trading Signals - more frequent signals
+ */
+export const getHourlySignalsFunction = new GameFunction({
+    name: "get_hourly_signals",
+    description: `Get Token Metrics hourly trading signals. More frequent updates than daily signals.`,
+    args: [
+        {
+            name: "token_id",
+            description: "Token ID (e.g., '3375' for BTC, '3306' for ETH)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ note: "Configure TOKEN_METRICS_API_KEY for hourly signals" })
+            );
+        }
+
+        const cacheKey = `hourly:${args.token_id || 'all'}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching hourly signals${args.token_id ? ` for token ${args.token_id}` : ''}...`);
+
+            const params: any = { limit: 10 };
+            if (args.token_id) params.token_id = args.token_id;
+
+            const data = await client.hourlyTradingSignals.get(params);
+            trackApiCall('hourlyTradingSignals');
+
+            const signalData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const signals = signalData.map((s: any) => ({
+                tokenId: s.TOKEN_ID || s.token_id,
+                symbol: s.TOKEN_SYMBOL || s.token_symbol,
+                signal: s.SIGNAL || s.signal,
+                price: s.PRICE || s.price,
+                timestamp: s.TIMESTAMP || s.timestamp || s.DATE || s.date
+            }));
+
+            const result = { signals, timestamp: new Date().toISOString() };
+            setCache(cacheKey, result);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch hourly signals: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Ask AI Agent - get market insights from Token Metrics AI
+ */
+export const askAIAgentFunction = new GameFunction({
+    name: "ask_tm_ai",
+    description: `Ask the Token Metrics AI agent for market insights. Great for:
+    - Market analysis questions
+    - Token forecasts
+    - Trading strategy advice`,
+    args: [
+        {
+            name: "question",
+            description: "Your question about crypto markets (e.g., 'What is your analysis of Bitcoin?')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.question) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Question is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ note: "Configure TOKEN_METRICS_API_KEY for AI agent" })
+            );
+        }
+
+        // Don't cache AI responses - they should be fresh
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Asking TM AI: "${args.question}"...`);
+
+            const answer = await client.aiAgent.getAnswerText(args.question);
+            trackApiCall('aiAgent');
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    source: "tokenmetrics_ai",
+                    question: args.question,
+                    answer: answer,
+                    timestamp: new Date().toISOString()
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to get AI response: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Moonshot Tokens - AI-curated high potential picks
+ */
+export const getMoonshotTokensFunction = new GameFunction({
+    name: "get_moonshot_tokens",
+    description: `Get Token Metrics AI-curated moonshot tokens with high breakout potential. Great for finding hidden gems.`,
+    args: [
+        {
+            name: "type",
+            description: "Type of moonshots: 'active' or 'all' (default: active)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ note: "Configure TOKEN_METRICS_API_KEY for moonshot tokens" })
+            );
+        }
+
+        const cacheKey = `moonshots:${args.type || 'active'}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching moonshot tokens...`);
+
+            const data = await client.moonshotTokens.get({
+                type: (args.type || 'active') as 'active' | 'past',
+                sort_by: 'roi_pct',
+                limit: 10
+            });
+            trackApiCall('moonshotTokens');
+
+            const tokenData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const tokens = tokenData.map((t: any) => ({
+                symbol: t.TOKEN_SYMBOL || t.token_symbol || t.symbol,
+                name: t.TOKEN_NAME || t.token_name || t.name,
+                roi: t.ROI_PCT || t.roi_pct,
+                grade: t.TM_GRADE || t.tm_grade,
+                price: t.PRICE || t.price
+            }));
+
+            const result = { tokens, timestamp: new Date().toISOString() };
+            setCache(cacheKey, result);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch moonshots: ${e instanceof Error ? e.message : 'Unknown error'}`
             );
         }
     }
@@ -486,7 +664,7 @@ export const getMarketSentimentFunction = new GameFunction({
     description: `Get Token Metrics AI market sentiment analysis. Shows bullish/bearish sentiment scores.`,
     args: [] as const,
     executable: async (args, logger) => {
-        if (!isTokenMetricsAvailable()) {
+        if (!isTokenMetricsAvailable() || !client) {
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
                 JSON.stringify({ note: "Configure TOKEN_METRICS_API_KEY for sentiment data" })
@@ -512,16 +690,18 @@ export const getMarketSentimentFunction = new GameFunction({
         try {
             logger('Fetching market sentiment...');
 
-            const data = await tmApiRequest('/sentiments', { limit: 10 });
-            trackApiCall('sentiments');
+            // Use market metrics as sentiment proxy
+            const data = await client.marketMetrics.get({ limit: 10 });
+            trackApiCall('marketMetrics');
 
-            const sentimentData = Array.isArray(data) ? data : [];
-            const sentiments = sentimentData.map((s: any) => ({
-                symbol: s.TOKEN_SYMBOL || s.token_symbol || s.symbol,
-                score: s.SENTIMENT_SCORE || s.sentiment_score || s.sentimentScore,
-                social: s.SOCIAL_SCORE || s.social_score || s.socialScore,
-                mood: (s.SENTIMENT_SCORE || s.sentiment_score || 0) >= 60 ? 'bullish' :
-                    (s.SENTIMENT_SCORE || s.sentiment_score || 0) >= 40 ? 'neutral' : 'bearish'
+            const metricsData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const sentiments = metricsData.map((s: any) => ({
+                date: s.DATE || s.date,
+                indicator: s.BULLISH_BEARISH_INDICATOR || s.bullish_bearish_indicator,
+                btcDominance: s.BTC_DOMINANCE || s.btc_dominance,
+                totalMarketCap: s.TOTAL_MARKET_CAP || s.total_market_cap,
+                mood: (s.BULLISH_BEARISH_INDICATOR || 0) >= 60 ? 'bullish' :
+                    (s.BULLISH_BEARISH_INDICATOR || 0) >= 40 ? 'neutral' : 'bearish'
             }));
 
             const result = { sentiments, timestamp: new Date().toISOString() };
@@ -529,7 +709,7 @@ export const getMarketSentimentFunction = new GameFunction({
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
-                JSON.stringify({ source: "tokenmetrics_api", ...result })
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
             );
         } catch (e) {
             return new ExecutableGameFunctionResponse(
