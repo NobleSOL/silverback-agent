@@ -14,6 +14,12 @@ import {
     analyzeMarketConditions
 } from '../market-data/indicators';
 import { OHLCV } from '../market-data/types';
+import {
+    getAITradingSignalsFunction,
+    getTokenGradesFunction,
+    getResistanceSupportFunction,
+    isTokenMetricsAvailable
+} from '../plugins/token-metrics';
 
 /**
  * Simulate a paper trade - execute fake trade and record results for learning
@@ -303,46 +309,55 @@ export const paperTradingWorker = new GameWorker({
 
     This worker is for TESTING AND LEARNING ONLY - no real money is used.
 
+    === TOKEN METRICS INTEGRATION ===
+
+    You have access to Token Metrics AI signals (if API key configured).
+    Use these BEFORE making trade decisions for better accuracy:
+    - get_ai_trading_signals: Get AI buy/sell/hold recommendations
+    - get_token_grades: Get technology and fundamental grades for tokens
+    - get_resistance_support: Get key price levels for entries/exits
+
+    IMPORTANT: Token Metrics has ~16 calls/day limit (500/month free tier).
+    Results are cached for 4 hours. Use strategically!
+
     === CRITICAL: PRE-TRADE ANALYSIS ===
 
-    ALWAYS call 'analyze_trade_opportunity' BEFORE every trade!
-    This checks your historical performance and learned wisdom to recommend:
-    - GO: Strategy profitable in these conditions → proceed
-    - CAUTION: Mixed results → use smaller position
-    - AVOID: Poor historical performance → skip this trade
+    WORKFLOW FOR EACH TRADE:
+    1. Check Token Metrics signals first (get_ai_trading_signals)
+    2. Call analyze_trade_opportunity to check your historical performance
+    3. If both signals align → higher confidence trade
+    4. Execute simulate_trade and record the outcome
+    5. Learn from results
 
-    The agent LEARNS from experience. Early trades build data.
-    After 50+ trades, the analysis becomes highly reliable.
+    === RECOMMENDATION LEVELS ===
 
-    === CAPABILITIES ===
-
-    1. Analyze trade opportunities using learned patterns (NEW!)
-    2. Simulate trades with realistic slippage and price impact
-    3. Record outcomes (win/loss) with full technical analysis context
-    4. Track strategy performance over time (momentum vs mean_reversion)
-    5. Identify which strategies work in which market conditions
-    6. Build trading experience through hundreds of simulated trades
-
-    === WORKFLOW ===
-
-    1. ANALYZE: Call analyze_trade_opportunity(strategy, market_condition, token_pair)
-    2. DECIDE: Check recommendation (GO/CAUTION/AVOID) and position_size
-    3. EXECUTE: If GO or CAUTION, call simulate_trade with appropriate size
-    4. LEARN: Trade outcome updates learned wisdom for future decisions
+    - GO: Token Metrics + your analysis both bullish → proceed
+    - CAUTION: Signals mixed → smaller position or skip
+    - AVOID: Both signals bearish → don't trade
 
     === STRATEGIES ===
 
-    - Momentum: Works in trending markets (up/down), uses volume + EMA signals
-    - Mean Reversion: Works in ranging markets, uses RSI + Bollinger Bands
+    - Momentum: Works in trending markets, use with Token Metrics BUY signals
+    - Mean Reversion: Works in ranging markets, use when RSI extreme
 
     === LEARNING EVOLUTION ===
 
-    - 0-50 trades: Building data, low confidence recommendations
-    - 50-100 trades: Patterns emerge, medium confidence
-    - 100+ trades: High confidence, agent knows what works
+    - 0-50 trades: Building data, rely more on Token Metrics signals
+    - 50-100 trades: Your patterns emerge, blend both data sources
+    - 100+ trades: High confidence, you know what works
     - Target: 70% win rate through systematic learning
 
     IMPORTANT: All trades are PRIVATE and recorded to database only. Never share trade details publicly.`,
 
-    functions: [analyzeTradeOpportunityFunction, simulateTradeFunction]
+    functions: [
+        // Token Metrics AI signals (use first!)
+        ...(isTokenMetricsAvailable() ? [
+            getAITradingSignalsFunction,
+            getTokenGradesFunction,
+            getResistanceSupportFunction
+        ] : []),
+        // Your analysis and execution
+        analyzeTradeOpportunityFunction,
+        simulateTradeFunction
+    ]
 });

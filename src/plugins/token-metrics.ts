@@ -24,6 +24,61 @@ dotenv.config();
 
 const TOKEN_METRICS_BASE_URL = "https://api.tokenmetrics.com/v2";
 
+// ============ RATE LIMITING & CACHING ============
+// FREE TIER: 500 API calls/month (~16/day) - must be strategic
+
+interface CacheEntry {
+    data: any;
+    timestamp: number;
+}
+
+const cache: Map<string, CacheEntry> = new Map();
+const CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours - aggressive caching
+
+// Track API calls
+let apiCallsToday = 0;
+let lastResetDate = new Date().toDateString();
+const DAILY_LIMIT = 16; // ~500/month ÷ 30 days
+
+function checkAndResetDailyCounter(): void {
+    const today = new Date().toDateString();
+    if (today !== lastResetDate) {
+        console.log(`📊 Token Metrics: Resetting daily counter (yesterday: ${apiCallsToday} calls)`);
+        apiCallsToday = 0;
+        lastResetDate = today;
+    }
+}
+
+function canMakeApiCall(): boolean {
+    checkAndResetDailyCounter();
+    return apiCallsToday < DAILY_LIMIT;
+}
+
+function getCached(key: string): any | null {
+    const entry = cache.get(key);
+    if (entry && Date.now() - entry.timestamp < CACHE_DURATION) {
+        console.log(`📦 Token Metrics cache hit: ${key}`);
+        return entry.data;
+    }
+    return null;
+}
+
+function setCache(key: string, data: any): void {
+    cache.set(key, { data, timestamp: Date.now() });
+}
+
+/**
+ * Get current API usage stats
+ */
+export function getApiUsageStats(): { callsToday: number; remaining: number; dailyLimit: number } {
+    checkAndResetDailyCounter();
+    return {
+        callsToday: apiCallsToday,
+        remaining: DAILY_LIMIT - apiCallsToday,
+        dailyLimit: DAILY_LIMIT
+    };
+}
+
 /**
  * Check if TokenMetrics API is available
  */
@@ -32,11 +87,21 @@ export function isTokenMetricsAvailable(): boolean {
 }
 
 /**
- * Helper function to make TokenMetrics API calls
+ * Helper function to make TokenMetrics API calls with caching and rate limiting
  */
 async function tokenMetricsRequest(endpoint: string, params: Record<string, string> = {}) {
     if (!process.env.TOKEN_METRICS_API_KEY) {
         throw new Error("TOKEN_METRICS_API_KEY not configured");
+    }
+
+    // Check cache first
+    const cacheKey = `${endpoint}:${JSON.stringify(params)}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    // Check rate limit
+    if (!canMakeApiCall()) {
+        throw new Error(`Daily API limit reached (${DAILY_LIMIT} calls). Using cached data or try tomorrow.`);
     }
 
     const url = new URL(`${TOKEN_METRICS_BASE_URL}${endpoint}`);
@@ -55,7 +120,14 @@ async function tokenMetricsRequest(endpoint: string, params: Record<string, stri
         throw new Error(`TokenMetrics API error: ${response.status}`);
     }
 
-    return response.json();
+    const data = await response.json();
+
+    // Track and cache
+    apiCallsToday++;
+    console.log(`📊 Token Metrics API call #${apiCallsToday}/${DAILY_LIMIT} today: ${endpoint}`);
+    setCache(cacheKey, data);
+
+    return data;
 }
 
 /**
