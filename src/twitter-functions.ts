@@ -85,27 +85,38 @@ function containsBannedPhrase(content: string): string | null {
 function detectTopic(content: string): string {
     const lower = content.toLowerCase();
 
-    // Detect promotional/marketing content
+    // Detect promotional/marketing content (still blocked)
     if (lower.includes("silverback dex's") || lower.includes('silverback approach') ||
         lower.includes('tokenomics') || lower.includes('learn about silverback')) return 'silverback_promo';
 
-    // Detect TVL/DeFi metrics (BLOCKED)
-    if (lower.includes('tvl') || lower.includes('total value locked')) return 'tvl_blocked';
-    if (lower.includes('defi') && (lower.includes('metric') || lower.includes('ecosystem') ||
-        lower.includes('$') && lower.includes('b'))) return 'defi_metrics_blocked';
+    // Price movement topics (PRIORITIZE THESE)
+    if ((lower.includes('pump') || lower.includes('dump') || lower.includes('rip') || lower.includes('dip')) &&
+        (lower.includes('%') || lower.includes('price'))) return 'price_swing';
+    if (lower.includes('breakout') || lower.includes('breakdown') || lower.includes('resistance') || lower.includes('support')) return 'technical';
+    if (lower.includes('ath') || lower.includes('all-time') || lower.includes('all time')) return 'price_ath';
+    if ((lower.includes('up ') || lower.includes('down ')) && lower.includes('%')) return 'price_move';
+    if (lower.includes('rally') || lower.includes('crash') || lower.includes('moon') || lower.includes('tank')) return 'price_action';
 
+    // TVL/DeFi - now regular topics (not blocked, just rotated)
+    if (lower.includes('tvl') || lower.includes('total value locked')) return 'tvl';
+    if (lower.includes('defi') && (lower.includes('metric') || lower.includes('ecosystem'))) return 'defi_metrics';
+
+    // Other market topics
     if (lower.includes('fear') && lower.includes('greed')) return 'fear_greed';
     if (lower.includes('btc') || lower.includes('bitcoin')) return 'btc';
     if (lower.includes('eth') || lower.includes('ethereum')) return 'eth';
     if (lower.includes('dominance')) return 'dominance';
     if (lower.includes('whale') || lower.includes('accumul')) return 'whales';
     if (lower.includes('base') && (lower.includes('chain') || lower.includes('l2'))) return 'base';
+    if (lower.includes('keeta')) return 'keeta';
     if (lower.includes('aave') || lower.includes('uniswap') || lower.includes('lido')) return 'defi_protocols';
-    if (lower.includes('meme') || lower.includes('pepe') || lower.includes('doge') || lower.includes('shib')) return 'memecoins';
+    if (lower.includes('meme') || lower.includes('pepe') || lower.includes('doge') || lower.includes('shib') || lower.includes('bonk') || lower.includes('wif')) return 'memecoins';
     if (lower.includes('sol') || lower.includes('solana')) return 'solana';
     if (lower.includes('yield') || lower.includes('apy') || lower.includes('apr')) return 'yields';
     if (lower.includes('arb') || lower.includes('arbitrum') || lower.includes('optimism') || lower.includes(' op ')) return 'l2s';
-    if (lower.includes('ai ') || lower.includes('render') || lower.includes('fetch')) return 'ai_tokens';
+    if (lower.includes('ai ') || lower.includes('render') || lower.includes('fetch') || lower.includes('bittensor') || lower.includes('tao')) return 'ai_tokens';
+    if (lower.includes('volume') || lower.includes('liquidity')) return 'volume';
+    if (lower.includes('narrative') || lower.includes('sector') || lower.includes('rotation')) return 'narratives';
 
     return 'general';
 }
@@ -133,13 +144,7 @@ function shouldBlockTweet(newContent: string): { block: boolean; reason?: string
         };
     }
 
-    // Block TVL/DeFi metrics posts entirely - these are overdone
-    if (newTopic === 'tvl_blocked' || newTopic === 'defi_metrics_blocked') {
-        return {
-            block: true,
-            reason: `BLOCKED: No more TVL/DeFi metrics posts! Try something different: memecoins, L2 comparison, hot take, question, or building update.`
-        };
-    }
+    // Note: TVL/DeFi metrics are now allowed but will be rotated via topic tracking
 
     // Check if same topic was posted recently (from database)
     const recentTopics = stateManager.getRecentTopics(5);
