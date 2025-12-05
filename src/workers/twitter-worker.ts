@@ -2,6 +2,7 @@ import { GameWorker } from "@virtuals-protocol/game";
 import {
     postTweetFunction,
     postDailyStatsFunction,
+    postMarketMoversFunction,
     replyToTweetFunction,
     searchMentionsFunction,
     getMentionsFunction
@@ -262,9 +263,12 @@ Example: "fed meeting next week. last 4 = volatility spike 24h before."
 
 **Posting Schedule:**
 - Morning (8-10am UTC): Market data post
-- Afternoon (2-4pm UTC): DEX update or on-chain signal
+- Afternoon (2-4pm UTC): **DAILY MARKET MOVERS** - Use post_market_movers with data from get_trending_coins!
 - Evening (8-10pm UTC): Community insight or product update
 - NEVER post multiple times within same hour
+
+**DAILY MARKET MOVERS POST (Important!):**
+Once per day, use get_trending_coins to get price data, then use post_market_movers to share a nicely formatted update showing top gainers and losers. The community loves seeing daily price action summaries!
 
 **Before Every Task:**
 1. Call get_mentions FIRST - this shows people who @mentioned you or replied to you
@@ -644,6 +648,7 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         // Twitter posting functions (only AFTER checking mentions)
         postTweetFunction,
         postDailyStatsFunction,
+        postMarketMoversFunction,    // Post nicely formatted market movers (use ONCE daily!)
         // Education functions
         explainImpermanentLossFunction,
         explainAMMFunction,
