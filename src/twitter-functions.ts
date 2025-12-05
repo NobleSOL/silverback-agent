@@ -282,6 +282,108 @@ export const postDailyStatsFunction = new GameFunction({
 });
 
 /**
+ * Post daily market movers - formats trending coins and price changes nicely
+ */
+export const postMarketMoversFunction = new GameFunction({
+    name: "post_market_movers",
+    description: `Post a nicely formatted market movers update to Twitter. Shows top gainers, losers, and trending coins in an easy-to-read format.
+
+    Use this ONCE daily for a market summary post. Fetches data automatically.`,
+    args: [
+        {
+            name: "movers",
+            description: "Array of {name, symbol, priceChange24h} objects from get_trending_coins or get_price_movers"
+        },
+        {
+            name: "commentary",
+            description: "Optional brief commentary (1 sentence max)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        try {
+            if (!args.movers) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    "Movers data required. Use get_trending_coins or get_price_movers first."
+                );
+            }
+
+            let movers: any[];
+            try {
+                movers = typeof args.movers === 'string' ? JSON.parse(args.movers) : args.movers;
+            } catch {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Failed,
+                    "Invalid movers data format"
+                );
+            }
+
+            // Sort by price change
+            const sorted = movers
+                .filter((m: any) => m.priceChange24h !== undefined)
+                .sort((a: any, b: any) => parseFloat(b.priceChange24h) - parseFloat(a.priceChange24h));
+
+            // Get top gainers (positive) and losers (negative)
+            const gainers = sorted.filter((m: any) => parseFloat(m.priceChange24h) > 0).slice(0, 3);
+            const losers = sorted.filter((m: any) => parseFloat(m.priceChange24h) < 0).slice(-3).reverse();
+
+            // Build tweet
+            let tweet = "📊 24h Market Movers\n\n";
+
+            if (gainers.length > 0) {
+                tweet += "🟢 Top Gainers:\n";
+                gainers.forEach((g: any) => {
+                    const change = parseFloat(g.priceChange24h).toFixed(1);
+                    tweet += `• $${g.symbol} +${change}%\n`;
+                });
+            }
+
+            if (losers.length > 0) {
+                tweet += "\n🔴 Top Losers:\n";
+                losers.forEach((l: any) => {
+                    const change = parseFloat(l.priceChange24h).toFixed(1);
+                    tweet += `• $${l.symbol} ${change}%\n`;
+                });
+            }
+
+            // Add commentary if provided
+            if (args.commentary && args.commentary.trim()) {
+                tweet += `\n${args.commentary.trim()}`;
+            }
+
+            tweet += "\n\n🦍 Silverback Intelligence";
+
+            // Trim to 280 chars if needed
+            if (tweet.length > 280) {
+                tweet = tweet.slice(0, 277) + "...";
+            }
+
+            logger(`Posting market movers: ${tweet}`);
+            const result = await twitterClient.v2.tweet(tweet);
+
+            // Track as market_movers topic
+            await stateManager.recordPostedTweet(tweet, 'market_movers');
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    success: true,
+                    tweetId: result.data.id,
+                    gainers: gainers.length,
+                    losers: losers.length,
+                    url: `https://x.com/user/status/${result.data.id}`
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to post market movers: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
  * Reply to a tweet
  */
 export const replyToTweetFunction = new GameFunction({
