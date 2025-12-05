@@ -4,17 +4,30 @@ import {
     ExecutableGameFunctionStatus,
 } from "@virtuals-protocol/game";
 import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./twitter";
+import { stateManager } from "./state/state-manager";
 
-// Track tweets we've already replied to (prevents duplicate replies)
-const repliedTweetIds = new Set<string>();
+// Track tweets we've already replied to (loaded from database + in-memory for current session)
+let repliedTweetIds: Set<string>;
 
-// Track recent tweet content to prevent duplicate posts
-const recentTweetContent: { content: string; timestamp: number; topic: string }[] = [];
-const DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 hours
+// Initialize from database on first access
+function getRepliedTweetIds(): Set<string> {
+    if (!repliedTweetIds) {
+        repliedTweetIds = stateManager.getRepliedTweetIds();
+        console.log(`📝 Loaded ${repliedTweetIds.size} replied tweet IDs from database`);
+    }
+    return repliedTweetIds;
+}
 
-// Track recent topics to force variety
-const recentTopics: string[] = [];
-const MAX_RECENT_TOPICS = 5;
+// Mark tweet as replied (saves to both memory and database)
+function markTweetAsReplied(tweetId: string): void {
+    getRepliedTweetIds().add(tweetId);
+    stateManager.markTweetReplied(tweetId);
+}
+
+// Check if already replied
+function hasRepliedToTweet(tweetId: string): boolean {
+    return getRepliedTweetIds().has(tweetId) || stateManager.hasRepliedToTweet(tweetId);
+}
 
 // BANNED PHRASES - these make tweets sound like a bot/marketing
 const BANNED_PHRASES = [
@@ -43,15 +56,13 @@ const BANNED_PHRASES = [
     'not using hash',
 ];
 
-// Clear old entries every hour
+// Clean old database entries every hour
 setInterval(() => {
-    if (repliedTweetIds.size > 1000) {
-        const entries = Array.from(repliedTweetIds);
-        entries.slice(0, entries.length - 500).forEach(id => repliedTweetIds.delete(id));
-    }
-    const cutoff = Date.now() - DUPLICATE_WINDOW_MS;
-    while (recentTweetContent.length > 0 && recentTweetContent[0].timestamp < cutoff) {
-        recentTweetContent.shift();
+    try {
+        stateManager.cleanOldRepliedTweets();
+        console.log('🧹 Cleaned old replied tweet records from database');
+    } catch (e) {
+        console.error('Failed to clean old records:', e);
     }
 }, 3600000);
 
@@ -100,7 +111,7 @@ function detectTopic(content: string): string {
 }
 
 /**
- * Check if tweet should be blocked
+ * Check if tweet should be blocked (uses database for persistence)
  */
 function shouldBlockTweet(newContent: string): { block: boolean; reason?: string } {
     // Check for banned phrases first
@@ -130,7 +141,8 @@ function shouldBlockTweet(newContent: string): { block: boolean; reason?: string
         };
     }
 
-    // Check if same topic was posted recently
+    // Check if same topic was posted recently (from database)
+    const recentTopics = stateManager.getRecentTopics(5);
     if (recentTopics.includes(newTopic) && newTopic !== 'general') {
         return {
             block: true,
@@ -138,11 +150,12 @@ function shouldBlockTweet(newContent: string): { block: boolean; reason?: string
         };
     }
 
-    // Check word similarity
+    // Check word similarity against recent tweets from database
     const normalizedNew = newContent.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
     const newWords = new Set(normalizedNew.split(/\s+/).filter(w => w.length > 3));
 
-    for (const recent of recentTweetContent) {
+    const recentTweets = stateManager.getRecentPostedTweets(4); // Last 4 hours
+    for (const recent of recentTweets) {
         const normalizedRecent = recent.content.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
 
         if (normalizedNew === normalizedRecent) {
@@ -205,14 +218,8 @@ export const postTweetFunction = new GameFunction({
             logger(`Posting tweet (topic: ${topic}): "${args.content}"`);
             const result = await twitterClient.v2.tweet(args.content);
 
-            // Track this tweet to prevent duplicates
-            recentTweetContent.push({ content: args.content, timestamp: Date.now(), topic });
-
-            // Track topic for variety enforcement
-            recentTopics.push(topic);
-            if (recentTopics.length > MAX_RECENT_TOPICS) {
-                recentTopics.shift();
-            }
+            // Track this tweet in database for persistence across restarts
+            stateManager.recordPostedTweet(args.content, topic);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -303,8 +310,8 @@ export const replyToTweetFunction = new GameFunction({
             const tweetId = args.tweetId;
             const content = args.content;
 
-            // Check if we've already replied to this tweet
-            if (repliedTweetIds.has(tweetId)) {
+            // Check if we've already replied to this tweet (checks both memory and database)
+            if (hasRepliedToTweet(tweetId)) {
                 logger(`Blocked duplicate reply to tweet ${tweetId} - already replied`);
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Failed,
@@ -331,8 +338,8 @@ export const replyToTweetFunction = new GameFunction({
             logger(`Replying to tweet ${tweetId}: "${content}"`);
             const result = await twitterClient.v2.reply(content, tweetId);
 
-            // Track this reply to prevent duplicates
-            repliedTweetIds.add(tweetId);
+            // Track this reply to prevent duplicates (saves to database for persistence)
+            markTweetAsReplied(tweetId);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -467,8 +474,8 @@ export const getMentionsFunction = new GameFunction({
             // Create a map of user IDs to usernames
             const userMap = new Map(users.map((u: any) => [u.id, { username: u.username, name: u.name }]));
 
-            // Filter out mentions we've already replied to
-            const unrepliedMentions = allMentions.filter((t: any) => !repliedTweetIds.has(t.id));
+            // Filter out mentions we've already replied to (checks database for persistence across restarts)
+            const unrepliedMentions = allMentions.filter((t: any) => !hasRepliedToTweet(t.id));
             const alreadyRepliedCount = allMentions.length - unrepliedMentions.length;
 
             if (alreadyRepliedCount > 0) {

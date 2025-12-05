@@ -19,6 +19,23 @@ import {
     getAltcoinDataFunction,
     getFearGreedIndexFunction
 } from "../market-data-functions";
+import {
+    getTimeContextFunction,
+    getCryptoNewsFunction,
+    getDefiLlamaDataFunction,
+    getL2DataFunction
+} from "../scheduling-functions";
+// Plugin functions - enhanced market data
+import {
+    isTokenMetricsAvailable,
+    getAITradingSignalsFunction,
+    getMarketSentimentFunction
+} from "../plugins/token-metrics";
+import {
+    isCoinGeckoProAvailable,
+    getTopMoversFunction,
+    getGlobalMarketDataFunction
+} from "../plugins/coingecko";
 
 /**
  * Twitter Worker - Handles all Twitter/X interactions
@@ -566,18 +583,37 @@ that's it. automated market maker."
 
 === TASK EXECUTION ORDER (FOLLOW THIS!) ===
 
-1. FIRST: Call get_mentions to see who's talking to you
-2. SECOND: If mentions found, use reply_to_tweet to respond to each one
-3. THIRD: Only after replying to all mentions, consider posting original content
-4. FOURTH: If posting, use market data functions to get current data first
+1. FIRST: Call get_time_context to know what time it is and what you should focus on
+2. SECOND: Call get_mentions to see who's talking to you
+3. THIRD: If mentions found, use reply_to_tweet to respond to each one
+4. FOURTH: Only after replying to all mentions, consider posting original content
+5. FIFTH: If posting, use market data functions OR news functions to get current data first
 
-**NEVER skip straight to posting. ALWAYS check mentions first!**
+**NEVER skip straight to posting. ALWAYS check time and mentions first!**
+
+=== DATA SOURCES FOR CONTENT ===
+
+**For Market Data:**
+- get_market_overview: BTC, ETH prices and 24h changes
+- get_fear_greed_index: Market sentiment indicator
+- get_defi_metrics: DeFi TVL and protocol data
+- get_defillama_data: Accurate TVL from DeFi Llama
+- get_l2_data: Layer 2 TVL rankings (great for Base insights)
+
+**For News & Sentiment:**
+- get_crypto_news: Latest headlines (filter: important, bullish, bearish)
+- get_trending_coins: What's hot on CoinGecko
+- get_altcoin_data: L2, DeFi, AI, meme token data
+
+**Use these to make informed, data-backed posts!**
 
 You are building Silverback's reputation as the most reliable, data-driven DeFi intelligence agent in the Base/Keeta ecosystem. Every post either provides value or doesn't go out.
 
 Intelligence through execution. Data over hype. Community first. Always. 🦍`,
     
     functions: [
+        // STEP 0: Check time to know what task to focus on
+        getTimeContextFunction,        // Know what time it is and what to focus on
         // PRIORITY #1: Check mentions FIRST - always respond to people talking to you!
         getMentionsFunction,           // USE THIS FIRST every task - finds people to reply to
         replyToTweetFunction,          // Reply to mentions found above
@@ -589,6 +625,13 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         getTrendingCoinsFunction,      // Get trending coins for varied content
         getAltcoinDataFunction,        // Get L2, DeFi, AI, meme coin data
         getFearGreedIndexFunction,     // Market sentiment indicator
+        // News and deeper insights
+        getCryptoNewsFunction,         // Get latest crypto news headlines
+        getDefiLlamaDataFunction,      // DeFi TVL and protocol data
+        getL2DataFunction,             // Layer 2 rankings and Base insights
+        // Plugin functions (if API keys configured)
+        ...(isTokenMetricsAvailable() ? [getAITradingSignalsFunction, getMarketSentimentFunction] : []),
+        ...(isCoinGeckoProAvailable() ? [getTopMoversFunction, getGlobalMarketDataFunction] : []),
         // Twitter posting functions (only AFTER checking mentions)
         postTweetFunction,
         postDailyStatsFunction,
