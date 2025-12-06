@@ -24,6 +24,7 @@ import {
     getMoonshotTokensFunction,
     getHourlyOHLCVFunction,
     getDailyOHLCVFunction,
+    getMarketMetricsFunction,
     isTokenMetricsAvailable,
     getApiUsageStats
 } from '../plugins/token-metrics';
@@ -492,6 +493,7 @@ export const paperTradingWorker = new GameWorker({
             getHourlySignalsFunction,         // More frequent signals
             getHourlyOHLCVFunction,           // Hourly candles for short-term analysis
             getDailyOHLCVFunction,            // Daily candles for longer-term trends
+            getMarketMetricsFunction,         // Overall market sentiment & guidance
             askAIAgentFunction,               // Ask TM AI for insights
             getMoonshotTokensFunction         // AI-curated high potential picks
         ] : []),

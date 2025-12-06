@@ -1147,3 +1147,188 @@ export const getDailyOHLCVFunction = new GameFunction({
         }
     }
 });
+
+/**
+ * Get Market Metrics - Overall crypto market health indicators
+ */
+export const getMarketMetricsFunction = new GameFunction({
+    name: "get_market_metrics",
+    description: `Get Token Metrics overall crypto market health indicators.
+
+    Provides "Bullish" and "Bearish" signals on the ENTIRE crypto market based on
+    market conditions and trend analysis. Essential for understanding market sentiment.
+
+    Datapoints:
+    - rect_signal: Market recommendation (-1=Bearish, 0=Neutral, 1=Bullish)
+    - tm_grade_signal: TM grade system signal (-1=Bearish, 0=Neutral, 1=Bullish)
+    - tm_grade_perc_high_coins: % of coins with high TM grade (bullish strength)
+    - total_crypto_mcap: Total market cap (USD)
+    - btc_price: Bitcoin price (USD)
+    - btc_market_cap: Bitcoin market cap (USD)
+    - alts_market_cap: Altcoin market cap (USD)
+    - alts_indicator: Altcoin strength vs BTC
+    - vol_index: Volatility index (market risk/uncertainty)
+    - vol_10: Short-term volatility (10-day)
+    - vol_90: Long-term volatility (90-day)
+    - above_ma: % of tokens above moving average (momentum)
+
+    Trading Strategy:
+    - rect_signal=1 + tm_grade_signal=1 → Market bullish, FAVOR LONGS
+    - rect_signal=-1 + tm_grade_signal=-1 → Market bearish, FAVOR SHORTS or CASH
+    - High tm_grade_perc_high_coins (>60%) → Strong bullish momentum
+    - vol_10 > vol_90 → Increasing volatility, be cautious
+    - above_ma > 60% → Market momentum bullish
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "limit",
+            description: "Number of days of data to fetch (default: 7)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    note: "Configure TOKEN_METRICS_API_KEY for market metrics"
+                })
+            );
+        }
+
+        const limit = parseInt(args.limit || '7', 10);
+        const cacheKey = `market_metrics:${limit}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger('Fetching market metrics...');
+
+            const data = await client.marketMetrics.get({ limit: limit });
+            trackApiCall('marketMetrics');
+
+            const metricsData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const metrics = metricsData.map((m: any) => ({
+                // Date
+                date: m.DATE || m.date,
+
+                // Market Signals
+                rectSignal: m.RECT_SIGNAL || m.rect_signal, // -1, 0, 1
+                tmGradeSignal: m.TM_GRADE_SIGNAL || m.tm_grade_signal, // -1, 0, 1
+                tmGradePercHighCoins: m.TM_GRADE_PERC_HIGH_COINS || m.tm_grade_perc_high_coins,
+
+                // Market Caps
+                totalCryptoMcap: m.TOTAL_CRYPTO_MCAP || m.total_crypto_mcap,
+                btcMarketCap: m.BTC_MARKET_CAP || m.btc_market_cap,
+                altsMarketCap: m.ALTS_MARKET_CAP || m.alts_market_cap,
+
+                // Prices
+                btcPrice: m.BTC_PRICE || m.btc_price,
+
+                // Indicators
+                altsIndicator: m.ALTS_INDICATOR || m.alts_indicator,
+                aboveMA: m.ABOVE_MA || m.above_ma,
+
+                // Volatility
+                volIndex: m.VOL_INDEX || m.vol_index,
+                vol10: m.VOL_10 || m.vol_10,
+                vol_90: m.VOL_90 || m.vol_90
+            }));
+
+            // Get latest metrics for analysis
+            const latest = metrics[0] || {};
+
+            // Interpret signals
+            const rectSignalStr = latest.rectSignal === 1 ? 'BULLISH' :
+                latest.rectSignal === -1 ? 'BEARISH' : 'NEUTRAL';
+            const tmSignalStr = latest.tmGradeSignal === 1 ? 'BULLISH' :
+                latest.tmGradeSignal === -1 ? 'BEARISH' : 'NEUTRAL';
+
+            // Overall market mood
+            let marketMood = 'NEUTRAL';
+            if (latest.rectSignal === 1 && latest.tmGradeSignal === 1) {
+                marketMood = 'BULLISH';
+            } else if (latest.rectSignal === -1 && latest.tmGradeSignal === -1) {
+                marketMood = 'BEARISH';
+            } else if (latest.rectSignal === 1 || latest.tmGradeSignal === 1) {
+                marketMood = 'SLIGHTLY_BULLISH';
+            } else if (latest.rectSignal === -1 || latest.tmGradeSignal === -1) {
+                marketMood = 'SLIGHTLY_BEARISH';
+            }
+
+            // Volatility assessment
+            let volatilityStatus = 'NORMAL';
+            if (latest.vol10 && latest.vol_90) {
+                if (latest.vol10 > latest.vol_90 * 1.2) {
+                    volatilityStatus = 'ELEVATED';
+                } else if (latest.vol10 < latest.vol_90 * 0.8) {
+                    volatilityStatus = 'LOW';
+                }
+            }
+
+            // Momentum assessment
+            let momentumStatus = 'NEUTRAL';
+            if (latest.aboveMA > 60) {
+                momentumStatus = 'BULLISH';
+            } else if (latest.aboveMA < 40) {
+                momentumStatus = 'BEARISH';
+            }
+
+            // Trading guidance
+            let tradingGuidance = 'WAIT';
+            if (marketMood === 'BULLISH' && momentumStatus === 'BULLISH') {
+                tradingGuidance = 'FAVOR_LONGS';
+            } else if (marketMood === 'BEARISH' && momentumStatus === 'BEARISH') {
+                tradingGuidance = 'FAVOR_SHORTS_OR_CASH';
+            } else if (volatilityStatus === 'ELEVATED') {
+                tradingGuidance = 'REDUCE_POSITION_SIZE';
+            }
+
+            const result = {
+                metrics: metrics,
+                latest: {
+                    date: latest.date,
+                    btcPrice: latest.btcPrice,
+                    totalMarketCap: latest.totalCryptoMcap,
+                    rectSignal: `${latest.rectSignal} (${rectSignalStr})`,
+                    tmGradeSignal: `${latest.tmGradeSignal} (${tmSignalStr})`,
+                    percentHighGradeCoins: latest.tmGradePercHighCoins,
+                    aboveMovingAverage: latest.aboveMA
+                },
+                analysis: {
+                    marketMood: marketMood,
+                    volatilityStatus: volatilityStatus,
+                    momentumStatus: momentumStatus,
+                    tradingGuidance: tradingGuidance,
+                    explanation: `Market is ${marketMood.toLowerCase().replace('_', ' ')} with ${volatilityStatus.toLowerCase()} volatility. ${latest.aboveMA ? `${latest.aboveMA}% of tokens` : 'Many tokens'} above MA.`
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`Market: ${marketMood}, Volatility: ${volatilityStatus}, Guidance: ${tradingGuidance}`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch market metrics: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
