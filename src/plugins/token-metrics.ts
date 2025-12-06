@@ -995,3 +995,155 @@ export const getHourlyOHLCVFunction = new GameFunction({
         }
     }
 });
+
+/**
+ * Get Daily OHLCV Data - for longer-term analysis
+ */
+export const getDailyOHLCVFunction = new GameFunction({
+    name: "get_daily_ohlcv",
+    description: `Get daily OHLCV (Open, High, Low, Close, Volume) data for a token.
+
+    Datapoints:
+    - open: Price at start of the day
+    - high: Highest price during the day
+    - low: Lowest price during the day
+    - close: Price at end of the day
+    - volume: Total trading volume during the day
+    - date: The day's date
+
+    Use cases:
+    - Longer-term trend analysis (days/weeks)
+    - Daily candlestick patterns
+    - Calculate daily indicators
+    - Compare daily volatility
+    - Track volume trends over time
+
+    Better than hourly for:
+    - Swing trading decisions
+    - Multi-day trend identification
+    - Support/resistance confirmation
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "symbol",
+            description: "Token symbol (e.g., 'BTC', 'ETH')"
+        },
+        {
+            name: "limit",
+            description: "Number of daily candles to fetch (default: 30)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.symbol) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Token symbol is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    symbol: args.symbol,
+                    note: "Configure TOKEN_METRICS_API_KEY for OHLCV data"
+                })
+            );
+        }
+
+        const limit = parseInt(args.limit || '30', 10);
+        const cacheKey = `daily_ohlcv:${args.symbol.toUpperCase()}:${limit}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching daily OHLCV for ${args.symbol}...`);
+
+            const data = await client.dailyOhlcv.get({
+                symbol: args.symbol.toUpperCase(),
+                limit: limit
+            });
+            trackApiCall('dailyOhlcv');
+
+            const ohlcvData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const candles = ohlcvData.map((c: any) => ({
+                date: c.DATE || c.date,
+                open: c.OPEN || c.open,
+                high: c.HIGH || c.high,
+                low: c.LOW || c.low,
+                close: c.CLOSE || c.close,
+                volume: c.VOLUME || c.volume
+            }));
+
+            // Calculate stats
+            const latestCandle = candles[0];
+            const priceRange = latestCandle ? (latestCandle.high - latestCandle.low) : 0;
+            const dailyRangePct = latestCandle ? ((priceRange / latestCandle.low) * 100).toFixed(2) : 0;
+
+            // Calculate 7-day and 30-day trends
+            let weekTrend = 'sideways';
+            let monthTrend = 'sideways';
+
+            if (candles.length >= 7) {
+                const weekChange = ((candles[0].close - candles[6].close) / candles[6].close * 100);
+                weekTrend = weekChange > 3 ? 'uptrend' : weekChange < -3 ? 'downtrend' : 'sideways';
+            }
+
+            if (candles.length >= 30) {
+                const monthChange = ((candles[0].close - candles[29].close) / candles[29].close * 100);
+                monthTrend = monthChange > 10 ? 'uptrend' : monthChange < -10 ? 'downtrend' : 'sideways';
+            }
+
+            // Calculate average volume
+            const avgVolume = candles.length > 0
+                ? candles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0) / candles.length
+                : 0;
+            const volumeVsAvg = latestCandle && avgVolume
+                ? ((latestCandle.volume - avgVolume) / avgVolume * 100).toFixed(1)
+                : 0;
+
+            const result = {
+                symbol: args.symbol.toUpperCase(),
+                candles: candles,
+                analysis: {
+                    latestPrice: latestCandle?.close,
+                    dailyHigh: latestCandle?.high,
+                    dailyLow: latestCandle?.low,
+                    dailyVolume: latestCandle?.volume,
+                    dailyRangePct: `${dailyRangePct}%`,
+                    weekTrend: weekTrend,
+                    monthTrend: monthTrend,
+                    volumeVsAvgPct: `${volumeVsAvg}%`,
+                    avgVolume: avgVolume
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`${args.symbol}: Latest ${latestCandle?.close}, Week: ${weekTrend}, Month: ${monthTrend}`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch daily OHLCV: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
