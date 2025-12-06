@@ -110,9 +110,18 @@ export function isTokenMetricsAvailable(): boolean {
  */
 export const getAITradingSignalsFunction = new GameFunction({
     name: "get_ai_trading_signals",
-    description: `Get Token Metrics AI trading signals with ~70% historical win rate. Returns LONG/SHORT recommendations with confidence levels. Use this BEFORE making trading decisions.
+    description: `Get Token Metrics AI trading signals with ~70% historical win rate.
 
-    IMPORTANT: ~16 calls/day limit. Results cached 4 hours. Use strategically!`,
+    Signal values:
+    - trading_signal: 1 (bullish/long), -1 (bearish/short), 0 (no signal)
+    - token_trend: current trend direction (up/down/sideways)
+    - trading_signals_returns: cumulative ROI of following this strategy
+    - holding_returns: ROI if you just held (for comparison)
+    - tm_grade: short-term trader grade (0-100)
+    - fundamental_grade: long-term outlook grade
+
+    Use this BEFORE making trading decisions!
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
     args: [
         {
             name: "symbol",
@@ -159,23 +168,50 @@ export const getAITradingSignalsFunction = new GameFunction({
 
             const signalData = Array.isArray(data) ? data : (data as any)?.data || [];
             const signals = signalData.slice(0, 15).map((s: any) => ({
+                // Token identification
+                tokenId: s.TOKEN_ID || s.token_id,
                 symbol: s.TOKEN_SYMBOL || s.token_symbol || s.symbol,
-                signal: s.SIGNAL || s.signal, // LONG or SHORT
-                confidence: s.SIGNAL_STRENGTH || s.signal_strength || s.confidence,
-                grade: s.TM_TRADER_GRADE || s.tm_trader_grade || s.grade,
-                price: s.PRICE || s.price,
-                date: s.DATE || s.date
+                name: s.TOKEN_NAME || s.token_name,
+
+                // Signal data (1 = bullish, -1 = bearish, 0 = neutral)
+                tradingSignal: s.TRADING_SIGNAL || s.trading_signal,
+                signalStr: s.TOKEN_SIGNAL_STR || s.token_signal_str, // "bullish", "bearish", "neutral"
+
+                // Trend data
+                trend: s.TOKEN_TREND || s.token_trend,
+                trendStr: s.TOKEN_TREND_STR || s.token_trend_str, // "up", "down", "sideways"
+
+                // Performance comparison
+                strategyReturns: s.TRADING_SIGNALS_RETURNS || s.trading_signals_returns, // Strategy ROI
+                holdingReturns: s.HOLDING_RETURNS || s.holding_returns, // Buy & hold ROI
+
+                // Grades
+                tmGrade: s.TM_GRADE || s.tm_grade, // Short-term grade
+                fundamentalGrade: s.FUNDAMENTAL_GRADE || s.fundamental_grade, // Long-term grade
+
+                // Metadata
+                date: s.DATE || s.date,
+                price: s.PRICE || s.price
             }));
+
+            // Summarize signals
+            const bullishSignals = signals.filter((s: any) => s.tradingSignal === 1 || s.signalStr === 'bullish');
+            const bearishSignals = signals.filter((s: any) => s.tradingSignal === -1 || s.signalStr === 'bearish');
 
             const result = {
                 signals,
-                bullish: signals.filter((s: any) => s.signal === 'LONG' || s.signal === 'BUY' || s.signal === 1).length,
-                bearish: signals.filter((s: any) => s.signal === 'SHORT' || s.signal === 'SELL' || s.signal === -1).length,
+                summary: {
+                    bullish: bullishSignals.length,
+                    bearish: bearishSignals.length,
+                    neutral: signals.length - bullishSignals.length - bearishSignals.length,
+                    topBullish: bullishSignals.slice(0, 3).map((s: any) => s.symbol),
+                    topBearish: bearishSignals.slice(0, 3).map((s: any) => s.symbol)
+                },
                 timestamp: new Date().toISOString()
             };
 
             setCache(cacheKey, result);
-            logger(`Found ${result.bullish} bullish, ${result.bearish} bearish signals`);
+            logger(`Found ${result.summary.bullish} bullish, ${result.summary.bearish} bearish signals`);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
