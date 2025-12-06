@@ -62,3 +62,14 @@ export {
     getTopMoversFunction,
     searchTokensFunction
 } from './coingecko';
+
+// Virtuals Protocol - $BACK Token Integration
+export {
+    BACK_TOKEN,
+    isVirtualsAvailable,
+    getBackHoldersFunction,
+    getBackTokenDataFunction,
+    getBackRecentTradesFunction,
+    generateBackPromoFunction,
+    virtualsFunctions
+} from './virtuals';

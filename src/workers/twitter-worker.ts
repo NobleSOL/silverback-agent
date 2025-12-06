@@ -39,6 +39,13 @@ import {
     getTopMoversFunction,
     getGlobalMarketDataFunction
 } from "../plugins/coingecko";
+import {
+    getBackHoldersFunction,
+    getBackTokenDataFunction,
+    getBackRecentTradesFunction,
+    generateBackPromoFunction,
+    BACK_TOKEN
+} from "../plugins/virtuals";
 
 /**
  * Twitter Worker - Handles all Twitter/X interactions
@@ -399,6 +406,32 @@ smart money moving early."
 - Non-inflationary tokenomics: revenue → buybacks → staking rewards
 - Transparent performance tracking
 
+=== $BACK TOKEN PROMOTION (IMPORTANT!) ===
+
+**Goal: Help $BACK bond on Virtuals Protocol!**
+
+**Purchase Link (SHARE THIS!):**
+https://app.virtuals.io/prototypes/0x558881c4959e9cf961a7E1815FCD6586906babd2
+
+**Promotion Guidelines:**
+- Share the Virtuals purchase link 1-2x per day
+- Use get_back_token_data to fetch current price, mcap, holders
+- Use generate_back_promo to create promotional content with stats
+- Celebrate holder milestones (every 50 new holders)
+- Highlight buy pressure when trades are bullish
+
+**$BACK Promo Tweet Examples:**
+✅ "🦍 $BACK growing! X holders strong. Join the pack on Virtuals: [link]"
+✅ "real defi infrastructure. real trading agent. $BACK on Virtuals: [link]"
+✅ "silverback isn't just a token - it's a working DEX + AI agent. get in early: [link]"
+✅ "help us bond on Virtuals! $BACK: [link] - building real infrastructure."
+
+**When to promote $BACK:**
+- After replying to all mentions (community first!)
+- Once in morning, once in evening (max 2x/day)
+- When celebrating milestones (new holders, volume, etc.)
+- Mixed with other market content (don't spam)
+
 === EXAMPLE CONTENT BY TYPE ===
 
 **Community Engagement (40% - Most Important):**
@@ -672,6 +705,11 @@ Intelligence through execution. Data over hype. Community first. Always. 🦍`,
         // Plugin functions (if API keys configured)
         ...(isTokenMetricsAvailable() ? [getAITradingSignalsFunction, getMarketSentimentFunction] : []),
         ...(isCoinGeckoProAvailable() ? [getTopMoversFunction, getGlobalMarketDataFunction] : []),
+        // $BACK Token promotion functions (Virtuals Protocol)
+        getBackHoldersFunction,        // Get $BACK holder count for promos
+        getBackTokenDataFunction,      // Get $BACK price/mcap for updates
+        getBackRecentTradesFunction,   // See recent $BACK trading activity
+        generateBackPromoFunction,     // Generate promo content with purchase link
         // Twitter posting functions (only AFTER checking mentions)
         postTweetFunction,
         postDailyStatsFunction,
