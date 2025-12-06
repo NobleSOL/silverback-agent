@@ -152,7 +152,7 @@ export const getBackTokenDataFunction = new GameFunction({
                 const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
                 const response = await fetch(geckoUrl, {
                     headers: {
-                        'Accept': 'application/json',
+                        'Accept': 'application/json;version=20230203',
                         'User-Agent': 'Silverback-Agent/1.0'
                     }
                 });
@@ -332,7 +332,7 @@ export const generateBackPromoFunction = new GameFunction({
             try {
                 const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
                 const response = await fetch(geckoUrl, {
-                    headers: { 'Accept': 'application/json' }
+                    headers: { 'Accept': 'application/json;version=20230203' }
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -387,7 +387,10 @@ export const generateBackPromoFunction = new GameFunction({
                     content += `✅ Live DEX on Base\n`;
                     content += `✅ AI-powered trading agent\n`;
                     content += `✅ Revenue sharing for holders\n\n`;
-                    content += `Get in early on Virtuals:\n${link}`;
+                    if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
+                    if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
+                    if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
+                    content += `\nGet in early on Virtuals:\n${link}`;
                     break;
 
                 case "educational":
@@ -396,13 +399,18 @@ export const generateBackPromoFunction = new GameFunction({
                     content += `1️⃣ A real DEX generating fees\n`;
                     content += `2️⃣ An autonomous AI trading agent\n`;
                     content += `3️⃣ Revenue shared with holders\n\n`;
-                    content += `Join the pack:\n${link}`;
+                    if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
+                    if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
+                    if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
+                    content += `\nJoin the pack:\n${link}`;
                     break;
 
                 case "milestone":
                     content = `🦍 Silverback Milestone!\n\n`;
                     if (holders !== "growing") content += `We've hit ${holders} holders!\n\n`;
-                    content += `The pack is growing stronger every day.\n`;
+                    if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
+                    if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
+                    content += `\nThe pack is growing stronger every day.\n`;
                     content += `Help us bond on Virtuals:\n${link}`;
                     break;
 
