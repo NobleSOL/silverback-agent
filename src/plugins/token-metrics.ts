@@ -1,5 +1,5 @@
 /**
- * TokenMetrics API Integration (Official SDK)
+ * TokenMetrics API Integration (REST API with SDK fallback)
  * Provides AI-powered trading signals, grades, and analytics
  *
  * Features (from their 70% win rate signals):
@@ -10,7 +10,7 @@
  * - Resistance/Support Levels
  * - AI Agent for market insights
  *
- * SDK Docs: https://www.npmjs.com/package/tmai-api
+ * Note: SDK has ESM issues on some Node versions, using REST API as primary
  */
 
 import {
@@ -18,24 +18,55 @@ import {
     ExecutableGameFunctionResponse,
     ExecutableGameFunctionStatus,
 } from "@virtuals-protocol/game";
-import { TokenMetricsClient } from 'tmai-api';
 import dotenv from "dotenv";
 
 dotenv.config();
 
-// ============ SDK CLIENT INITIALIZATION ============
+// ============ REST API CLIENT ============
 const API_KEY = process.env.TOKEN_METRICS_API_KEY;
-let client: TokenMetricsClient | null = null;
+const BASE_URL = 'https://api.tokenmetrics.com/v2';
+
+// Generic client interface to match SDK structure
+interface TMClient {
+    get: (endpoint: string, params?: Record<string, any>) => Promise<any>;
+}
+
+let client: TMClient | null = null;
 
 if (API_KEY) {
-    try {
-        client = new TokenMetricsClient(API_KEY);
-        console.log('📊 Token Metrics SDK initialized');
-    } catch (e) {
-        console.log('📊 Token Metrics SDK init error:', e instanceof Error ? e.message : e);
-    }
+    // Use REST API directly (more reliable than SDK with ESM issues)
+    client = {
+        get: async (endpoint: string, params?: Record<string, any>) => {
+            const url = new URL(`${BASE_URL}/${endpoint}`);
+            if (params) {
+                Object.entries(params).forEach(([key, value]) => {
+                    if (value !== undefined) url.searchParams.append(key, String(value));
+                });
+            }
+
+            const response = await fetch(url.toString(), {
+                headers: {
+                    'accept': 'application/json',
+                    'api_key': API_KEY
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status} ${response.statusText}`);
+            }
+
+            return response.json();
+        }
+    };
+    console.log('📊 Token Metrics REST API initialized');
 } else {
     console.log('📊 Token Metrics: No API key configured (TOKEN_METRICS_API_KEY)');
+}
+
+// Helper to call API endpoints
+async function callAPI(endpoint: string, params?: Record<string, any>): Promise<any> {
+    if (!client) throw new Error('Token Metrics client not initialized');
+    return client.get(endpoint, params);
 }
 
 // ============ RATE LIMITING & CACHING ============
@@ -163,7 +194,7 @@ export const getAITradingSignalsFunction = new GameFunction({
             const params: any = { limit: 20 };
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await client.tradingSignals.get(params);
+            const data = await callAPI('trading-signals', params);
             trackApiCall('tradingSignals');
 
             const signalData = Array.isArray(data) ? data : (data as any)?.data || [];
@@ -292,7 +323,7 @@ export const getTokenGradesFunction = new GameFunction({
         try {
             logger(`Fetching TM grades for ${args.symbol}...`);
 
-            const data = await client.tmGrades.get({ symbol: args.symbol.toUpperCase() });
+            const data = await callAPI('trader-grades', { symbol: args.symbol.toUpperCase() });
             trackApiCall('tmGrades');
 
             const gradeData = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
@@ -433,7 +464,7 @@ export const getResistanceSupportFunction = new GameFunction({
         try {
             logger(`Fetching support/resistance for ${args.symbol}...`);
 
-            const data = await client.resistanceSupport.get({ symbol: args.symbol.toUpperCase() });
+            const data = await callAPI('resistance-support', { symbol: args.symbol.toUpperCase() });
             trackApiCall('resistanceSupport');
 
             const rawData = Array.isArray(data) ? data : (data as any)?.data || [];
@@ -581,7 +612,7 @@ export const getPricePredictionsFunction = new GameFunction({
             const params: any = {};
             if (args.symbol) params.symbol = args.symbol.toUpperCase();
 
-            const data = await client.pricePrediction.get(params);
+            const data = await callAPI('price-prediction', params);
             trackApiCall('pricePrediction');
 
             const predictionData = Array.isArray(data) ? data : (data as any)?.data || [];
@@ -654,7 +685,7 @@ export const getHourlySignalsFunction = new GameFunction({
             const params: any = { limit: 10 };
             if (args.token_id) params.token_id = args.token_id;
 
-            const data = await client.hourlyTradingSignals.get(params);
+            const data = await callAPI('hourly-trading-signals', params);
             trackApiCall('hourlyTradingSignals');
 
             const signalData = Array.isArray(data) ? data : (data as any)?.data || [];
@@ -723,8 +754,25 @@ export const askAIAgentFunction = new GameFunction({
         try {
             logger(`Asking TM AI: "${args.question}"...`);
 
-            const answer = await client.aiAgent.getAnswerText(args.question);
+            // AI Agent uses POST request
+            const response = await fetch(`${BASE_URL}/ai-agent`, {
+                method: 'POST',
+                headers: {
+                    'accept': 'application/json',
+                    'content-type': 'application/json',
+                    'api_key': API_KEY!
+                },
+                body: JSON.stringify({ question: args.question })
+            });
+
+            if (!response.ok) {
+                throw new Error(`AI Agent API error: ${response.status}`);
+            }
+
+            const result = await response.json();
             trackApiCall('aiAgent');
+
+            const answer = result.answer || result.data?.answer || result.response || JSON.stringify(result);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -783,8 +831,8 @@ export const getMoonshotTokensFunction = new GameFunction({
         try {
             logger(`Fetching moonshot tokens...`);
 
-            const data = await client.moonshotTokens.get({
-                type: (args.type || 'active') as 'active' | 'past',
+            const data = await callAPI('moonshot-tokens', {
+                type: args.type || 'active',
                 sort_by: 'roi_pct',
                 limit: 10
             });
@@ -850,7 +898,7 @@ export const getMarketSentimentFunction = new GameFunction({
             logger('Fetching market sentiment...');
 
             // Use market metrics as sentiment proxy
-            const data = await client.marketMetrics.get({ limit: 10 });
+            const data = await callAPI('market-metrics', { limit: 10 });
             trackApiCall('marketMetrics');
 
             const metricsData = Array.isArray(data) ? data : (data as any)?.data || [];
@@ -976,7 +1024,7 @@ export const getHourlyOHLCVFunction = new GameFunction({
         try {
             logger(`Fetching hourly OHLCV for ${args.symbol}...`);
 
-            const data = await client.hourlyOhlcv.get({
+            const data = await callAPI('hourly-ohlcv', {
                 symbol: args.symbol.toUpperCase(),
                 limit: limit
             });
@@ -1114,7 +1162,7 @@ export const getDailyOHLCVFunction = new GameFunction({
         try {
             logger(`Fetching daily OHLCV for ${args.symbol}...`);
 
-            const data = await client.dailyOhlcv.get({
+            const data = await callAPI('daily-ohlcv', {
                 symbol: args.symbol.toUpperCase(),
                 limit: limit
             });
@@ -1258,7 +1306,7 @@ export const getMarketMetricsFunction = new GameFunction({
         try {
             logger('Fetching market metrics...');
 
-            const data = await client.marketMetrics.get({ limit: limit });
+            const data = await callAPI('market-metrics', { limit: limit });
             trackApiCall('marketMetrics');
 
             const metricsData = Array.isArray(data) ? data : (data as any)?.data || [];
