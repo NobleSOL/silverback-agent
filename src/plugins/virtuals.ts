@@ -152,7 +152,7 @@ export const getBackTokenDataFunction = new GameFunction({
                 const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
                 const response = await fetch(geckoUrl, {
                     headers: {
-                        'Accept': 'application/json',
+                        'Accept': 'application/json;version=20230203',
                         'User-Agent': 'Silverback-Agent/1.0'
                     }
                 });
@@ -332,7 +332,7 @@ export const generateBackPromoFunction = new GameFunction({
             try {
                 const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
                 const response = await fetch(geckoUrl, {
-                    headers: { 'Accept': 'application/json' }
+                    headers: { 'Accept': 'application/json;version=20230203' }
                 });
                 if (response.ok) {
                     const data = await response.json();
