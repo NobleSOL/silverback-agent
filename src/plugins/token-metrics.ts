@@ -231,12 +231,24 @@ export const getAITradingSignalsFunction = new GameFunction({
  */
 export const getTokenGradesFunction = new GameFunction({
     name: "get_token_grades",
-    description: `Get Token Metrics AI grades for a token. Includes:
-    - TM Grade (overall trading potential)
-    - Fundamental Grade
-    - Momentum indicators
+    description: `Get Token Metrics AI grades for a token.
 
-    Grades from 0-100. Higher = better opportunity.`,
+    Datapoints:
+    - tm_grade: Short-term Trader Grade (0-100) - overall trading potential
+    - fundamental_grade: Long-term outlook grade (0-100)
+    - signal: Current signal (1=bullish, -1=bearish, 0=neutral)
+    - signal_str: String signal ("bullish", "bearish", "neutral")
+    - momentum: Price momentum indicator
+    - volatility: Token volatility level
+    - market_cap_rank: Ranking by market cap
+
+    Grade interpretation:
+    - 70-100: STRONG_BUY - excellent short-term opportunity
+    - 50-69: BUY - good opportunity
+    - 30-49: HOLD - neutral, wait for better entry
+    - 0-29: AVOID - poor outlook
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
     args: [
         {
             name: "symbol",
@@ -291,22 +303,48 @@ export const getTokenGradesFunction = new GameFunction({
                 );
             }
 
-            const tmGrade = gradeData.TM_GRADE || gradeData.tm_grade || gradeData.grade || 0;
+            const tmGrade = gradeData.TM_GRADE || gradeData.tm_grade || 0;
+            const fundamentalGrade = gradeData.FUNDAMENTAL_GRADE || gradeData.fundamental_grade || 0;
+            const signal = gradeData.SIGNAL || gradeData.signal;
+
             const result = {
+                // Token info
+                tokenId: gradeData.TOKEN_ID || gradeData.token_id,
                 symbol: args.symbol.toUpperCase(),
+                name: gradeData.TOKEN_NAME || gradeData.token_name,
+
+                // Core grades (0-100)
                 tmGrade: tmGrade,
-                fundamentalGrade: gradeData.FUNDAMENTAL_GRADE || gradeData.fundamental_grade,
-                signal: gradeData.SIGNAL || gradeData.signal,
+                fundamentalGrade: fundamentalGrade,
+
+                // Signal data
+                signal: signal, // 1, -1, or 0
+                signalStr: signal === 1 ? 'bullish' : signal === -1 ? 'bearish' : 'neutral',
+
+                // Additional metrics
                 momentum: gradeData.MOMENTUM || gradeData.momentum,
+                volatility: gradeData.VOLATILITY || gradeData.volatility,
+                marketCapRank: gradeData.MARKET_CAP_RANK || gradeData.market_cap_rank,
+
+                // Price info
                 price: gradeData.PRICE || gradeData.price,
+                priceChange24h: gradeData.PRICE_CHANGE_24H || gradeData.price_change_24h,
+
+                // Computed recommendation
                 recommendation: tmGrade >= 70 ? 'STRONG_BUY' :
                     tmGrade >= 50 ? 'BUY' :
                     tmGrade >= 30 ? 'HOLD' : 'AVOID',
+
+                // Action guidance
+                action: signal === 1 && tmGrade >= 50 ? 'CONSIDER_LONG' :
+                    signal === -1 && tmGrade < 30 ? 'CONSIDER_SHORT' : 'WAIT',
+
+                date: gradeData.DATE || gradeData.date,
                 timestamp: new Date().toISOString()
             };
 
             setCache(cacheKey, result);
-            logger(`${args.symbol}: TM Grade ${result.tmGrade}, Rec: ${result.recommendation}`);
+            logger(`${args.symbol}: TM Grade ${result.tmGrade}, Signal: ${result.signalStr}, Action: ${result.action}`);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -326,10 +364,25 @@ export const getTokenGradesFunction = new GameFunction({
  */
 export const getResistanceSupportFunction = new GameFunction({
     name: "get_resistance_support",
-    description: `Get AI-calculated resistance and support levels for a token. Essential for:
-    - Setting entry points (buy at support)
-    - Setting exit points (sell at resistance)
-    - Placing stop losses`,
+    description: `Get AI-calculated resistance and support levels for a token.
+
+    Datapoints:
+    - resistance_1/2/3: Price levels where selling pressure may increase (R1 nearest)
+    - support_1/2/3: Price levels where buying pressure may increase (S1 nearest)
+    - price: Current token price
+
+    Trading Strategy:
+    - BUY near support levels (S1, S2, S3) - price likely to bounce
+    - SELL near resistance levels (R1, R2, R3) - price likely to face resistance
+    - Set STOP LOSS just below support for longs
+    - Set TAKE PROFIT just below resistance for longs
+
+    Example: If BTC at $95,000, S1=$93,000, R1=$98,000
+    - Good entry: near $93,000 (S1)
+    - Take profit: near $98,000 (R1)
+    - Stop loss: below $93,000
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
     args: [
         {
             name: "symbol",
@@ -384,19 +437,47 @@ export const getResistanceSupportFunction = new GameFunction({
                 );
             }
 
+            const currentPrice = levels.PRICE || levels.price || 0;
+            const r1 = levels.RESISTANCE_1 || levels.resistance_1;
+            const s1 = levels.SUPPORT_1 || levels.support_1;
+
+            // Calculate distance to nearest levels
+            const distanceToR1 = r1 ? ((r1 - currentPrice) / currentPrice * 100).toFixed(2) : null;
+            const distanceToS1 = s1 ? ((currentPrice - s1) / currentPrice * 100).toFixed(2) : null;
+
+            // Determine position relative to levels
+            let position = 'middle';
+            if (distanceToS1 && parseFloat(distanceToS1) < 2) position = 'near_support';
+            if (distanceToR1 && parseFloat(distanceToR1) < 2) position = 'near_resistance';
+
             const result = {
                 symbol: args.symbol.toUpperCase(),
-                currentPrice: levels.PRICE || levels.price,
+                currentPrice: currentPrice,
+
+                // Resistance levels (price ceilings)
                 resistance: {
-                    r1: levels.RESISTANCE_1 || levels.resistance_1,
+                    r1: r1, // Nearest resistance
                     r2: levels.RESISTANCE_2 || levels.resistance_2,
-                    r3: levels.RESISTANCE_3 || levels.resistance_3
+                    r3: levels.RESISTANCE_3 || levels.resistance_3  // Furthest resistance
                 },
+
+                // Support levels (price floors)
                 support: {
-                    s1: levels.SUPPORT_1 || levels.support_1,
+                    s1: s1, // Nearest support
                     s2: levels.SUPPORT_2 || levels.support_2,
-                    s3: levels.SUPPORT_3 || levels.support_3
+                    s3: levels.SUPPORT_3 || levels.support_3  // Furthest support
                 },
+
+                // Analysis
+                analysis: {
+                    distanceToR1Pct: distanceToR1 ? `${distanceToR1}%` : null,
+                    distanceToS1Pct: distanceToS1 ? `${distanceToS1}%` : null,
+                    position: position, // 'near_support', 'near_resistance', or 'middle'
+                    suggestion: position === 'near_support' ? 'GOOD_ENTRY_ZONE' :
+                        position === 'near_resistance' ? 'TAKE_PROFIT_ZONE' : 'WAIT_FOR_BETTER_ENTRY'
+                },
+
+                date: levels.DATE || levels.date,
                 timestamp: new Date().toISOString()
             };
 
@@ -779,5 +860,138 @@ export const getApiUsageFunction = new GameFunction({
                 apiAvailable: isTokenMetricsAvailable()
             })
         );
+    }
+});
+
+/**
+ * Get Hourly OHLCV Data - for technical analysis
+ */
+export const getHourlyOHLCVFunction = new GameFunction({
+    name: "get_hourly_ohlcv",
+    description: `Get hourly OHLCV (Open, High, Low, Close, Volume) data for a token.
+
+    Datapoints:
+    - open: Price at start of the hour
+    - high: Highest price during the hour
+    - low: Lowest price during the hour
+    - close: Price at end of the hour
+    - volume: Total trading volume during the hour
+    - timestamp: The hour timestamp
+
+    Use cases:
+    - Technical analysis (candlestick patterns)
+    - Identify price trends and momentum
+    - Calculate indicators (RSI, MACD, etc.)
+    - Measure volatility (high-low range)
+    - Track volume spikes
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "symbol",
+            description: "Token symbol (e.g., 'BTC', 'ETH')"
+        },
+        {
+            name: "limit",
+            description: "Number of hourly candles to fetch (default: 24)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.symbol) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Token symbol is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    symbol: args.symbol,
+                    note: "Configure TOKEN_METRICS_API_KEY for OHLCV data"
+                })
+            );
+        }
+
+        const limit = parseInt(args.limit || '24', 10);
+        const cacheKey = `ohlcv:${args.symbol.toUpperCase()}:${limit}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching hourly OHLCV for ${args.symbol}...`);
+
+            const data = await client.hourlyOhlcv.get({
+                symbol: args.symbol.toUpperCase(),
+                limit: limit
+            });
+            trackApiCall('hourlyOhlcv');
+
+            const ohlcvData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const candles = ohlcvData.map((c: any) => ({
+                timestamp: c.TIMESTAMP || c.timestamp,
+                open: c.OPEN || c.open,
+                high: c.HIGH || c.high,
+                low: c.LOW || c.low,
+                close: c.CLOSE || c.close,
+                volume: c.VOLUME || c.volume
+            }));
+
+            // Calculate some basic stats
+            const latestCandle = candles[0];
+            const priceRange = latestCandle ? (latestCandle.high - latestCandle.low) : 0;
+            const priceRangePct = latestCandle ? ((priceRange / latestCandle.low) * 100).toFixed(2) : 0;
+
+            // Simple trend detection
+            let trend = 'sideways';
+            if (candles.length >= 3) {
+                const recentCloses = candles.slice(0, 3).map((c: any) => c.close);
+                if (recentCloses[0] > recentCloses[1] && recentCloses[1] > recentCloses[2]) {
+                    trend = 'uptrend';
+                } else if (recentCloses[0] < recentCloses[1] && recentCloses[1] < recentCloses[2]) {
+                    trend = 'downtrend';
+                }
+            }
+
+            const result = {
+                symbol: args.symbol.toUpperCase(),
+                candles: candles,
+                analysis: {
+                    latestPrice: latestCandle?.close,
+                    hourlyHigh: latestCandle?.high,
+                    hourlyLow: latestCandle?.low,
+                    hourlyVolume: latestCandle?.volume,
+                    priceRangePct: `${priceRangePct}%`,
+                    shortTermTrend: trend
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`${args.symbol}: Latest ${latestCandle?.close}, Trend: ${trend}`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch OHLCV: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
     }
 });
