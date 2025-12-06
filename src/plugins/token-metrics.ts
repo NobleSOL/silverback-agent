@@ -367,9 +367,14 @@ export const getResistanceSupportFunction = new GameFunction({
     description: `Get AI-calculated resistance and support levels for a token.
 
     Datapoints:
+    - token_id: Token ID for identifying cryptocurrency
+    - token_name: Name of the crypto asset (e.g., Bitcoin)
+    - token_symbol: Symbol of the crypto asset (e.g., BTC)
     - resistance_1/2/3: Price levels where selling pressure may increase (R1 nearest)
     - support_1/2/3: Price levels where buying pressure may increase (S1 nearest)
+    - historical_resistance_support_levels: Historical list of all R/S levels
     - price: Current token price
+    - app_link: Link to Token Metrics token details page
 
     Trading Strategy:
     - BUY near support levels (S1, S2, S3) - price likely to bounce
@@ -381,6 +386,8 @@ export const getResistanceSupportFunction = new GameFunction({
     - Good entry: near $93,000 (S1)
     - Take profit: near $98,000 (R1)
     - Stop loss: below $93,000
+
+    Use Case: Figure out good points to take profit and set stop losses.
 
     IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
     args: [
@@ -429,7 +436,8 @@ export const getResistanceSupportFunction = new GameFunction({
             const data = await client.resistanceSupport.get({ symbol: args.symbol.toUpperCase() });
             trackApiCall('resistanceSupport');
 
-            const levels = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
+            const rawData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const levels = rawData[0];
             if (!levels) {
                 return new ExecutableGameFunctionResponse(
                     ExecutableGameFunctionStatus.Done,
@@ -437,9 +445,19 @@ export const getResistanceSupportFunction = new GameFunction({
                 );
             }
 
+            // Token identification
+            const tokenId = levels.TOKEN_ID || levels.token_id;
+            const tokenName = levels.TOKEN_NAME || levels.token_name;
+            const tokenSymbol = levels.TOKEN_SYMBOL || levels.token_symbol || args.symbol.toUpperCase();
+            const slug = levels.SLUG || levels.slug;
+
             const currentPrice = levels.PRICE || levels.price || 0;
             const r1 = levels.RESISTANCE_1 || levels.resistance_1;
+            const r2 = levels.RESISTANCE_2 || levels.resistance_2;
+            const r3 = levels.RESISTANCE_3 || levels.resistance_3;
             const s1 = levels.SUPPORT_1 || levels.support_1;
+            const s2 = levels.SUPPORT_2 || levels.support_2;
+            const s3 = levels.SUPPORT_3 || levels.support_3;
 
             // Calculate distance to nearest levels
             const distanceToR1 = r1 ? ((r1 - currentPrice) / currentPrice * 100).toFixed(2) : null;
@@ -450,23 +468,42 @@ export const getResistanceSupportFunction = new GameFunction({
             if (distanceToS1 && parseFloat(distanceToS1) < 2) position = 'near_support';
             if (distanceToR1 && parseFloat(distanceToR1) < 2) position = 'near_resistance';
 
+            // Extract historical levels if available
+            const historicalLevels = levels.HISTORICAL_RESISTANCE_SUPPORT_LEVELS ||
+                levels.historical_resistance_support_levels || null;
+
+            // Build app link
+            const appLink = slug
+                ? `https://app.tokenmetrics.com/token/${slug}`
+                : tokenId
+                    ? `https://app.tokenmetrics.com/token/${tokenId}`
+                    : null;
+
             const result = {
-                symbol: args.symbol.toUpperCase(),
+                // Token identification
+                tokenId: tokenId,
+                tokenName: tokenName,
+                symbol: tokenSymbol,
+                slug: slug,
+
                 currentPrice: currentPrice,
 
                 // Resistance levels (price ceilings)
                 resistance: {
                     r1: r1, // Nearest resistance
-                    r2: levels.RESISTANCE_2 || levels.resistance_2,
-                    r3: levels.RESISTANCE_3 || levels.resistance_3  // Furthest resistance
+                    r2: r2,
+                    r3: r3  // Furthest resistance
                 },
 
                 // Support levels (price floors)
                 support: {
                     s1: s1, // Nearest support
-                    s2: levels.SUPPORT_2 || levels.support_2,
-                    s3: levels.SUPPORT_3 || levels.support_3  // Furthest support
+                    s2: s2,
+                    s3: s3  // Furthest support
                 },
+
+                // Historical levels (if available)
+                historicalLevels: historicalLevels,
 
                 // Analysis
                 analysis: {
@@ -474,15 +511,20 @@ export const getResistanceSupportFunction = new GameFunction({
                     distanceToS1Pct: distanceToS1 ? `${distanceToS1}%` : null,
                     position: position, // 'near_support', 'near_resistance', or 'middle'
                     suggestion: position === 'near_support' ? 'GOOD_ENTRY_ZONE' :
-                        position === 'near_resistance' ? 'TAKE_PROFIT_ZONE' : 'WAIT_FOR_BETTER_ENTRY'
+                        position === 'near_resistance' ? 'TAKE_PROFIT_ZONE' : 'WAIT_FOR_BETTER_ENTRY',
+                    stopLossLevel: s1 ? `Below $${s1} (S1)` : null,
+                    takeProfitLevel: r1 ? `Near $${r1} (R1)` : null
                 },
+
+                // Links
+                appLink: appLink,
 
                 date: levels.DATE || levels.date,
                 timestamp: new Date().toISOString()
             };
 
             setCache(cacheKey, result);
-            logger(`${args.symbol}: R1=${result.resistance.r1}, S1=${result.support.s1}`);
+            logger(`${tokenSymbol}: R1=${r1}, S1=${s1}, Position: ${position}`);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
