@@ -17,14 +17,17 @@ import {
 // $BACK Token Configuration
 export const BACK_TOKEN = {
     address: "0x558881c4959e9cf961a7E1815FCD6586906babd2",
+    poolAddress: "0x9b8c88fd9372a3c8f3526e71ffd5de0972006bba", // DEX pool for price data
     name: "Silverback",
     symbol: "BACK",
     chain: "Base",
     purchaseLink: "https://app.virtuals.io/prototypes/0x558881c4959e9cf961a7E1815FCD6586906babd2",
-    dexLink: "https://silverbackdefi.app"
+    dexLink: "https://silverbackdefi.app",
+    geckoTerminalLink: "https://www.geckoterminal.com/base/pools/0x9b8c88fd9372a3c8f3526e71ffd5de0972006bba"
 };
 
-// Virtuals API Base URLs
+// API Base URLs
+const GECKO_TERMINAL_BASE = "https://api.geckoterminal.com/api/v2";
 const API2_BASE = "https://api2.virtuals.io/api";
 const VP_API_BASE = "https://vp-api.virtuals.io/vp-api";
 
@@ -120,11 +123,11 @@ export const getBackHoldersFunction = new GameFunction({
 });
 
 /**
- * Get $BACK token price and market data from DEX reserves
+ * Get $BACK token price and market data from GeckoTerminal (primary) or Virtuals (fallback)
  */
 export const getBackTokenDataFunction = new GameFunction({
     name: "get_back_token_data",
-    description: `Get comprehensive $BACK token data including price, market cap, and liquidity from Virtuals Protocol. Use this for promotional tweets and community updates about $BACK.`,
+    description: `Get comprehensive $BACK token data including price, market cap, volume, and liquidity from GeckoTerminal. Use this for promotional tweets and community updates about $BACK.`,
     args: [] as const,
     executable: async (args, logger) => {
         try {
@@ -139,42 +142,86 @@ export const getBackTokenDataFunction = new GameFunction({
                 );
             }
 
-            logger(`🦍 Fetching $BACK token data from Virtuals...`);
+            logger(`🦍 Fetching $BACK token data from GeckoTerminal...`);
 
-            // Try to get token reserves/liquidity data
-            const reservesUrl = `${API2_BASE}/dex/token-reserves/${BACK_TOKEN.address}`;
+            let poolData: any = null;
             let tokenData: any = {};
 
+            // Primary: Try GeckoTerminal API for pool data
             try {
-                tokenData = await fetchVirtualsAPI(reservesUrl);
+                const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
+                const response = await fetch(geckoUrl, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Silverback-Agent/1.0'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    poolData = data.data?.attributes;
+                    logger(`✅ GeckoTerminal data retrieved`);
+                }
             } catch (e) {
-                logger(`⚠️ Reserves endpoint not available, trying alternative...`);
-                // Try alternative endpoint
-                const altUrl = `${API2_BASE}/virtuals/${BACK_TOKEN.address}`;
-                tokenData = await fetchVirtualsAPI(altUrl);
+                logger(`⚠️ GeckoTerminal not available, trying Virtuals API...`);
             }
 
+            // Fallback: Try Virtuals API
+            if (!poolData) {
+                try {
+                    const reservesUrl = `${API2_BASE}/dex/token-reserves/${BACK_TOKEN.address}`;
+                    tokenData = await fetchVirtualsAPI(reservesUrl);
+                } catch (e) {
+                    try {
+                        const altUrl = `${API2_BASE}/virtuals/${BACK_TOKEN.address}`;
+                        tokenData = await fetchVirtualsAPI(altUrl);
+                    } catch (e2) {
+                        logger(`⚠️ Virtuals API also not available`);
+                    }
+                }
+            }
+
+            // Extract data from GeckoTerminal pool response
             const result = {
                 token: BACK_TOKEN.symbol,
                 name: BACK_TOKEN.name,
                 address: BACK_TOKEN.address,
+                poolAddress: BACK_TOKEN.poolAddress,
                 chain: BACK_TOKEN.chain,
-                price: tokenData.price || tokenData.priceUsd || tokenData.current_price || null,
-                priceChange24h: tokenData.priceChange24h || tokenData.price_change_24h || null,
-                marketCap: tokenData.marketCap || tokenData.market_cap || tokenData.mcap || null,
-                volume24h: tokenData.volume24h || tokenData.volume || null,
-                liquidity: tokenData.liquidity || tokenData.tvl || tokenData.reserves || null,
+                // GeckoTerminal data (primary)
+                price: poolData?.base_token_price_usd || tokenData.price || tokenData.priceUsd || null,
+                priceChange24h: poolData?.price_change_percentage?.h24 || tokenData.priceChange24h || null,
+                priceChange1h: poolData?.price_change_percentage?.h1 || null,
+                priceChange6h: poolData?.price_change_percentage?.h6 || null,
+                marketCap: poolData?.market_cap_usd || poolData?.fdv_usd || tokenData.marketCap || null,
+                volume24h: poolData?.volume_usd?.h24 || tokenData.volume24h || null,
+                liquidity: poolData?.reserve_in_usd || tokenData.liquidity || null,
+                // Pool info
+                poolName: poolData?.name || null,
+                dexName: poolData?.dex?.name || "Virtuals",
+                // Transaction counts
+                txns24h: poolData?.transactions?.h24 ? {
+                    buys: poolData.transactions.h24.buys,
+                    sells: poolData.transactions.h24.sells,
+                    total: poolData.transactions.h24.buys + poolData.transactions.h24.sells
+                } : null,
+                // Links
                 purchaseLink: BACK_TOKEN.purchaseLink,
                 dexLink: BACK_TOKEN.dexLink,
+                geckoTerminalLink: BACK_TOKEN.geckoTerminalLink,
+                dataSource: poolData ? "GeckoTerminal" : "Virtuals",
                 timestamp: new Date().toISOString()
             };
 
             setCachedData(cacheKey, result);
 
-            logger(`✅ $BACK data retrieved:`);
-            if (result.price) logger(`   Price: $${result.price}`);
-            if (result.marketCap) logger(`   Market Cap: $${result.marketCap}`);
-            if (result.liquidity) logger(`   Liquidity: $${result.liquidity}`);
+            logger(`✅ $BACK data retrieved (source: ${result.dataSource}):`);
+            if (result.price) logger(`   Price: $${parseFloat(result.price).toFixed(8)}`);
+            if (result.priceChange24h) logger(`   24h Change: ${result.priceChange24h}%`);
+            if (result.marketCap) logger(`   Market Cap: $${formatNumber(result.marketCap)}`);
+            if (result.volume24h) logger(`   24h Volume: $${formatNumber(result.volume24h)}`);
+            if (result.liquidity) logger(`   Liquidity: $${formatNumber(result.liquidity)}`);
+            if (result.txns24h) logger(`   24h Txns: ${result.txns24h.total} (${result.txns24h.buys} buys, ${result.txns24h.sells} sells)`);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -276,15 +323,34 @@ export const generateBackPromoFunction = new GameFunction({
 
             logger(`🦍 Generating $BACK promo content (style: ${style})...`);
 
-            // Try to get fresh data
+            // Try to get fresh data from GeckoTerminal (primary) or Virtuals (fallback)
+            let poolData: any = null;
             let tokenData: any = {};
             let holderData: any = {};
 
+            // Primary: GeckoTerminal for price data
             try {
-                const reservesUrl = `${API2_BASE}/virtuals/${BACK_TOKEN.address}`;
-                tokenData = await fetchVirtualsAPI(reservesUrl);
+                const geckoUrl = `${GECKO_TERMINAL_BASE}/networks/base/pools/${BACK_TOKEN.poolAddress}`;
+                const response = await fetch(geckoUrl, {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    poolData = data.data?.attributes;
+                    logger(`✅ GeckoTerminal data retrieved for promo`);
+                }
             } catch (e) {
-                logger(`⚠️ Could not fetch live token data`);
+                logger(`⚠️ GeckoTerminal not available`);
+            }
+
+            // Fallback: Virtuals API
+            if (!poolData) {
+                try {
+                    const reservesUrl = `${API2_BASE}/virtuals/${BACK_TOKEN.address}`;
+                    tokenData = await fetchVirtualsAPI(reservesUrl);
+                } catch (e) {
+                    logger(`⚠️ Could not fetch live token data`);
+                }
             }
 
             try {
@@ -295,8 +361,10 @@ export const generateBackPromoFunction = new GameFunction({
             }
 
             const holders = holderData.totalHolders || holderData.count || "growing";
-            const price = tokenData.price || tokenData.priceUsd;
-            const mcap = tokenData.marketCap || tokenData.mcap;
+            const price = poolData?.base_token_price_usd || tokenData.price || tokenData.priceUsd;
+            const mcap = poolData?.market_cap_usd || poolData?.fdv_usd || tokenData.marketCap || tokenData.mcap;
+            const volume24h = poolData?.volume_usd?.h24;
+            const priceChange24h = poolData?.price_change_percentage?.h24;
 
             // Generate content based on style
             let content = "";
@@ -306,8 +374,10 @@ export const generateBackPromoFunction = new GameFunction({
                 case "stats":
                     content = `🦍 $BACK Token Stats\n\n`;
                     if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
-                    if (price) content += `💰 Price: $${parseFloat(price).toFixed(6)}\n`;
+                    if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
+                    if (priceChange24h) content += `📈 24h: ${parseFloat(priceChange24h) >= 0 ? '+' : ''}${parseFloat(priceChange24h).toFixed(2)}%\n`;
                     if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
+                    if (volume24h) content += `💹 24h Vol: $${formatNumber(volume24h)}\n`;
                     content += `\nJoin the pack on Virtuals:\n${link}`;
                     break;
 
@@ -351,7 +421,10 @@ export const generateBackPromoFunction = new GameFunction({
                 tokenData: {
                     holders: holders,
                     price: price,
-                    marketCap: mcap
+                    priceChange24h: priceChange24h,
+                    marketCap: mcap,
+                    volume24h: volume24h,
+                    dataSource: poolData ? "GeckoTerminal" : "Virtuals"
                 },
                 timestamp: new Date().toISOString()
             };
@@ -398,4 +471,6 @@ export function isVirtualsAvailable(): boolean {
 
 console.log('🦍 Virtuals Protocol integration initialized');
 console.log(`   $BACK Token: ${BACK_TOKEN.address}`);
+console.log(`   Pool: ${BACK_TOKEN.poolAddress}`);
 console.log(`   Purchase: ${BACK_TOKEN.purchaseLink}`);
+console.log(`   GeckoTerminal: ${BACK_TOKEN.geckoTerminalLink}`);
