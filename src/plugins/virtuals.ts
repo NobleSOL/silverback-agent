@@ -70,6 +70,7 @@ async function fetchVirtualsAPI(url: string): Promise<any> {
 
 /**
  * Get $BACK token holder count and distribution
+ * Uses Basescan API as primary source for accurate holder count
  */
 export const getBackHoldersFunction = new GameFunction({
     name: "get_back_holders",
@@ -88,22 +89,50 @@ export const getBackHoldersFunction = new GameFunction({
                 );
             }
 
-            logger(`🦍 Fetching $BACK holder data from Virtuals...`);
+            logger(`🦍 Fetching $BACK holder data...`);
 
-            const url = `${API2_BASE}/tokens/${BACK_TOKEN.address}/holders`;
-            const data = await fetchVirtualsAPI(url);
+            let holders = 0;
+
+            // Primary: Try Basescan API for accurate holder count
+            try {
+                const basescanUrl = `https://api.basescan.org/api?module=token&action=tokeninfo&contractaddress=${BACK_TOKEN.address}`;
+                const response = await fetch(basescanUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.result && data.result[0]?.holdersCount) {
+                        holders = parseInt(data.result[0].holdersCount);
+                        logger(`✅ Basescan: ${holders} holders`);
+                    }
+                }
+            } catch (e) {
+                logger(`⚠️ Basescan API not available`);
+            }
+
+            // Fallback: Try Virtuals API
+            if (holders === 0) {
+                try {
+                    const url = `${API2_BASE}/tokens/${BACK_TOKEN.address}/holders`;
+                    const data = await fetchVirtualsAPI(url);
+                    holders = data.totalHolders || data.holders?.length || data.count || 0;
+                } catch (e) {
+                    logger(`⚠️ Virtuals holders API not available`);
+                }
+            }
 
             const result = {
                 token: BACK_TOKEN.symbol,
                 tokenAddress: BACK_TOKEN.address,
                 chain: BACK_TOKEN.chain,
-                holders: data.totalHolders || data.holders?.length || data.count || 0,
-                topHolders: data.holders?.slice(0, 5) || [],
+                holders: holders,
                 purchaseLink: BACK_TOKEN.purchaseLink,
                 timestamp: new Date().toISOString()
             };
 
-            setCachedData(cacheKey, result);
+            // Only cache if we got valid holder count
+            if (holders > 0) {
+                setCachedData(cacheKey, result);
+            }
+
             logger(`✅ Found ${result.holders} $BACK holders`);
 
             return new ExecutableGameFunctionResponse(
@@ -370,15 +399,21 @@ export const generateBackPromoFunction = new GameFunction({
             let content = "";
             const link = BACK_TOKEN.purchaseLink;
 
+            // Only include holders if > 0
+            const showHolders = typeof holders === 'number' && holders > 0;
+
             switch (style) {
                 case "stats":
+                    // User's preferred format - clean stats only
                     content = `🦍 $BACK Token Stats\n\n`;
-                    if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
                     if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
-                    if (priceChange24h) content += `📈 24h: ${parseFloat(priceChange24h) >= 0 ? '+' : ''}${parseFloat(priceChange24h).toFixed(2)}%\n`;
+                    if (priceChange24h !== null && priceChange24h !== undefined) {
+                        const change = parseFloat(priceChange24h);
+                        content += `📈 24h: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%\n`;
+                    }
                     if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
                     if (volume24h) content += `💹 24h Vol: $${formatNumber(volume24h)}\n`;
-                    content += `\nJoin the pack on Virtuals:\n${link}`;
+                    content += `\nJoin the pack on Virtuals:\n\n${link}`;
                     break;
 
                 case "hype":
@@ -388,7 +423,7 @@ export const generateBackPromoFunction = new GameFunction({
                     content += `✅ AI-powered trading agent\n`;
                     content += `✅ Revenue sharing for holders\n\n`;
                     if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
-                    if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
+                    if (showHolders) content += `👥 Holders: ${holders.toLocaleString()}\n`;
                     if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
                     content += `\nGet in early on Virtuals:\n${link}`;
                     break;
@@ -400,14 +435,14 @@ export const generateBackPromoFunction = new GameFunction({
                     content += `2️⃣ An autonomous AI trading agent\n`;
                     content += `3️⃣ Revenue shared with holders\n\n`;
                     if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
-                    if (holders !== "growing") content += `👥 Holders: ${holders}\n`;
+                    if (showHolders) content += `👥 Holders: ${holders.toLocaleString()}\n`;
                     if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
                     content += `\nJoin the pack:\n${link}`;
                     break;
 
                 case "milestone":
                     content = `🦍 Silverback Milestone!\n\n`;
-                    if (holders !== "growing") content += `We've hit ${holders} holders!\n\n`;
+                    if (showHolders) content += `We've hit ${holders.toLocaleString()} holders!\n\n`;
                     if (price) content += `💰 Price: $${parseFloat(price).toFixed(8)}\n`;
                     if (mcap) content += `📊 MCap: $${formatNumber(mcap)}\n`;
                     content += `\nThe pack is growing stronger every day.\n`;
