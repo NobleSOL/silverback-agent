@@ -20,9 +20,9 @@ export const getMarketOverviewFunction = new GameFunction({
         try {
             logger("Fetching current market data from CoinGecko...");
 
-            // Fetch BTC, ETH, and key metrics
+            // Fetch BTC, ETH, and key metrics including 7-day change for better trend detection
             const response = await fetch(
-                'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,usd-coin,tether&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true'
+                'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,usd-coin,tether&order=market_cap_desc&sparkline=false&price_change_percentage=24h,7d,30d'
             );
 
             if (!response.ok) {
@@ -31,28 +31,55 @@ export const getMarketOverviewFunction = new GameFunction({
 
             const data = await response.json();
 
+            // Parse response array into objects by id
+            const btc = data.find((c: any) => c.id === 'bitcoin');
+            const eth = data.find((c: any) => c.id === 'ethereum');
+            const usdc = data.find((c: any) => c.id === 'usd-coin');
+            const usdt = data.find((c: any) => c.id === 'tether');
+
             // Calculate stablecoin market cap (USDC + USDT)
-            const stablecoinMarketCap = (data['usd-coin']?.usd_market_cap || 0) + (data.tether?.usd_market_cap || 0);
+            const stablecoinMarketCap = (usdc?.market_cap || 0) + (usdt?.market_cap || 0);
+
+            // Determine market trend using 7-day and 30-day changes for better accuracy
+            // A market is bullish when zoomed out if 7d change is positive, bearish otherwise
+            const btc7dChange = btc?.price_change_percentage_7d_in_currency || 0;
+            const btc30dChange = btc?.price_change_percentage_30d_in_currency || 0;
+            const btc24hChange = btc?.price_change_percentage_24h_in_currency || 0;
+
+            // Use weighted average: 50% weight on 7d, 30% on 30d, 20% on 24h
+            const trendScore = (btc7dChange * 0.5) + (btc30dChange * 0.3) + (btc24hChange * 0.2);
+            const marketTrend = trendScore > 2 ? 'bullish' : trendScore < -2 ? 'bearish' : 'neutral';
 
             const result = {
                 bitcoin: {
-                    price: data.bitcoin?.usd || 0,
-                    change24h: data.bitcoin?.usd_24h_change?.toFixed(2) || '0',
-                    marketCap: formatLargeNumber(data.bitcoin?.usd_market_cap || 0),
-                    volume24h: formatLargeNumber(data.bitcoin?.usd_24h_vol || 0)
+                    price: btc?.current_price || 0,
+                    change24h: btc?.price_change_percentage_24h_in_currency?.toFixed(2) || '0',
+                    change7d: btc?.price_change_percentage_7d_in_currency?.toFixed(2) || '0',
+                    change30d: btc?.price_change_percentage_30d_in_currency?.toFixed(2) || '0',
+                    marketCap: formatLargeNumber(btc?.market_cap || 0),
+                    volume24h: formatLargeNumber(btc?.total_volume || 0)
                 },
                 ethereum: {
-                    price: data.ethereum?.usd || 0,
-                    change24h: data.ethereum?.usd_24h_change?.toFixed(2) || '0',
-                    marketCap: formatLargeNumber(data.ethereum?.usd_market_cap || 0),
-                    volume24h: formatLargeNumber(data.ethereum?.usd_24h_vol || 0)
+                    price: eth?.current_price || 0,
+                    change24h: eth?.price_change_percentage_24h_in_currency?.toFixed(2) || '0',
+                    change7d: eth?.price_change_percentage_7d_in_currency?.toFixed(2) || '0',
+                    change30d: eth?.price_change_percentage_30d_in_currency?.toFixed(2) || '0',
+                    marketCap: formatLargeNumber(eth?.market_cap || 0),
+                    volume24h: formatLargeNumber(eth?.total_volume || 0)
                 },
                 stablecoins: {
                     totalMarketCap: formatLargeNumber(stablecoinMarketCap),
-                    usdcMarketCap: formatLargeNumber(data['usd-coin']?.usd_market_cap || 0),
-                    usdtMarketCap: formatLargeNumber(data.tether?.usd_market_cap || 0)
+                    usdcMarketCap: formatLargeNumber(usdc?.market_cap || 0),
+                    usdtMarketCap: formatLargeNumber(usdt?.market_cap || 0)
                 },
-                marketTrend: data.bitcoin?.usd_24h_change > 0 ? 'bullish' : 'bearish',
+                marketTrend,
+                trendDetails: {
+                    btc24hChange: btc24hChange.toFixed(2),
+                    btc7dChange: btc7dChange.toFixed(2),
+                    btc30dChange: btc30dChange.toFixed(2),
+                    trendScore: trendScore.toFixed(2),
+                    note: "Trend based on weighted average: 50% 7d + 30% 30d + 20% 24h change"
+                },
                 timestamp: new Date().toISOString()
             };
 
