@@ -46,12 +46,17 @@ const PAIR_ABI = [
 
 const ROUTER_ABI = [
     'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+    'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
+    'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable returns (uint256[] amounts)',
+    'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
 ];
 
 const ERC20_ABI = [
     'function decimals() view returns (uint8)',
     'function symbol() view returns (string)',
     'function balanceOf(address) view returns (uint256)',
+    'function allowance(address owner, address spender) view returns (uint256)',
+    'function approve(address spender, uint256 amount) returns (bool)',
 ];
 
 // Keeta DEX API
@@ -175,6 +180,13 @@ export interface ExecuteSwapOutput {
         txHash: string;
         actualOutput: string;
         executionPrice: string;
+        sold?: string;
+        received?: string;
+        recipient?: string;
+        gasUsed?: string;
+        chain?: string;
+        router?: string;
+        timestamp?: string;
     };
     error?: string;
 }
@@ -524,17 +536,187 @@ export async function handleTechnicalAnalysis(input: TechnicalAnalysisInput): Pr
     }
 }
 
+// Token symbol to address mapping for Base network
+const TOKEN_SYMBOLS: Record<string, string> = {
+    'WETH': '0x4200000000000000000000000000000000000006',
+    'ETH': '0x4200000000000000000000000000000000000006',
+    'USDC': '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    'BACK': '0x558881c4959e9cf961a7E1815FCD6586906babd2',
+    'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+};
+
+// Resolve token input (address or symbol) to address
+function resolveTokenAddress(tokenInput: string): string | null {
+    // If already an address
+    if (isValidAddress(tokenInput)) {
+        return tokenInput;
+    }
+    // Try symbol lookup
+    const upper = tokenInput.toUpperCase();
+    return TOKEN_SYMBOLS[upper] || null;
+}
+
 /**
  * Service 4: Execute DEX Swap (Premium)
  * Price: 0.1% of trade value (min $0.50 USDC)
- * Status: PHASE 2 - NOT YET ENABLED
  */
 export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<ExecuteSwapOutput> {
-    // Phase 2 - Not yet enabled
-    return {
-        success: false,
-        error: "Swap execution is not yet enabled. Currently in Phase 1 (read-only mode). Use swap-quote service to get quotes without executing."
-    };
+    try {
+        const { tokenIn, tokenOut, amountIn, slippage, walletAddress } = input;
+
+        // Check if swap execution is enabled
+        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY;
+        if (!SWAP_PRIVATE_KEY) {
+            return {
+                success: false,
+                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY or WALLET_PRIVATE_KEY must be set."
+            };
+        }
+
+        // Validate inputs
+        if (!tokenIn || !tokenOut || !amountIn) {
+            return {
+                success: false,
+                error: "Missing required parameters: tokenIn, tokenOut, amountIn"
+            };
+        }
+
+        // Resolve token addresses (support both symbols and addresses)
+        const tokenInAddress = resolveTokenAddress(tokenIn);
+        const tokenOutAddress = resolveTokenAddress(tokenOut);
+
+        if (!tokenInAddress) {
+            return {
+                success: false,
+                error: `Invalid tokenIn: ${tokenIn}. Use 0x address or symbol (WETH, USDC, BACK, DAI)`
+            };
+        }
+
+        if (!tokenOutAddress) {
+            return {
+                success: false,
+                error: `Invalid tokenOut: ${tokenOut}. Use 0x address or symbol (WETH, USDC, BACK, DAI)`
+            };
+        }
+
+        // Parse slippage (default 0.5%)
+        const slippagePercent = parseFloat(slippage || '0.5');
+        if (slippagePercent < 0.1 || slippagePercent > 50) {
+            return {
+                success: false,
+                error: "Slippage must be between 0.1% and 50%"
+            };
+        }
+
+        const provider = getProvider();
+
+        // Create wallet signer
+        const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
+        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
+
+        // Get token details
+        const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
+        const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, provider);
+        const decimalsIn = await tokenInContract.decimals();
+        const decimalsOut = await tokenOutContract.decimals();
+        const symbolIn = await tokenInContract.symbol();
+        const symbolOut = await tokenOutContract.symbol();
+
+        // Convert amount to wei
+        const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
+
+        // Get quote first
+        const path = [tokenInAddress, tokenOutAddress];
+        const amounts = await router.getAmountsOut(amountInWei, path);
+        const expectedOut = amounts[1];
+
+        // Calculate minimum output with slippage
+        const slippageMultiplier = BigInt(Math.floor((100 - slippagePercent) * 100));
+        const amountOutMin = (expectedOut * slippageMultiplier) / BigInt(10000);
+
+        // Set deadline (20 minutes from now)
+        const deadline = Math.floor(Date.now() / 1000) + 1200;
+
+        // Recipient address (use provided wallet or executor wallet)
+        const recipient = walletAddress && isValidAddress(walletAddress)
+            ? walletAddress
+            : wallet.address;
+
+        // Check allowance and approve if needed
+        const allowance = await tokenInContract.allowance(wallet.address, SILVERBACK_UNIFIED_ROUTER) as bigint;
+        if (allowance < amountInWei) {
+            console.log(`Approving ${symbolIn} for router...`);
+            const tokenInWithSigner = new ethers.Contract(tokenInAddress, ERC20_ABI, wallet);
+            const approveTx = await tokenInWithSigner.getFunction('approve')(
+                SILVERBACK_UNIFIED_ROUTER,
+                ethers.MaxUint256
+            );
+            await approveTx.wait();
+            console.log(`Approval confirmed: ${approveTx.hash}`);
+        }
+
+        // Execute the swap
+        console.log(`Executing swap: ${amountIn} ${symbolIn} -> ${symbolOut}`);
+        const routerSigner = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, wallet);
+        const tx = await routerSigner.getFunction('swapExactTokensForTokens')(
+            amountInWei,
+            amountOutMin,
+            path,
+            recipient,
+            deadline
+        );
+
+        // Wait for confirmation
+        const receipt = await tx.wait();
+
+        // Get actual output from logs (simplified - assumes last transfer event)
+        const actualOut = ethers.formatUnits(expectedOut, decimalsOut);
+        const executionPrice = (parseFloat(amountIn) / parseFloat(actualOut)).toFixed(6);
+
+        return {
+            success: true,
+            data: {
+                txHash: receipt.hash,
+                actualOutput: actualOut,
+                executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
+                sold: `${amountIn} ${symbolIn}`,
+                received: `${actualOut} ${symbolOut}`,
+                recipient: recipient,
+                gasUsed: receipt.gasUsed.toString(),
+                chain: 'Base',
+                router: SILVERBACK_UNIFIED_ROUTER,
+                timestamp: new Date().toISOString()
+            }
+        };
+    } catch (e) {
+        const error = e as Error;
+
+        // Handle specific errors
+        if (error.message.includes('INSUFFICIENT_LIQUIDITY')) {
+            return {
+                success: false,
+                error: "Insufficient liquidity for this swap"
+            };
+        }
+        if (error.message.includes('INSUFFICIENT_OUTPUT_AMOUNT')) {
+            return {
+                success: false,
+                error: "Slippage too high - price moved unfavorably. Try increasing slippage tolerance."
+            };
+        }
+        if (error.message.includes('insufficient funds')) {
+            return {
+                success: false,
+                error: "Insufficient token balance or gas for swap"
+            };
+        }
+
+        return {
+            success: false,
+            error: `Swap execution failed: ${error.message}`
+        };
+    }
 }
 
 /**
