@@ -7,6 +7,7 @@ import { paperTradingWorker } from "./workers/paper-trading-worker";
 // import { tradingWorker } from "./workers/trading-worker";
 import { SILVERBACK_KNOWLEDGE } from "./knowledge";
 import { stateManager } from "./state/state-manager";
+import { getAcpPlugin, getAcpState, getAcpAgentDescription, isAcpConfigured } from "./acp";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -21,10 +22,11 @@ dotenv.config();
  */
 export const getAgentState = async () => {
     const state = stateManager.getState();
+    const acpState = await getAcpState();
 
     return {
         agent_name: "Silverback",
-        role: "DeFi Trading Agent",
+        role: "DeFi Trading Agent & ACP Provider",
         dex: "Silverback DEX",
         chain: "Base",
         token: "$BACK",
@@ -53,7 +55,10 @@ export const getAgentState = async () => {
             mistakes_to_avoid: state.insights.commonMistakes.slice(0, 3),
             optimal_conditions: state.insights.optimalMarketConditions,
             best_strategy: state.insights.bestPerformingStrategy
-        }
+        },
+
+        // ACP Commerce state
+        acp: acpState
     };
 };
 
@@ -430,7 +435,8 @@ Your mission is to prove that AI agents can be trusted sources of market intelli
         ...(isTelegramWorkerEnabled() ? [telegramSignalsWorker] : [])
     ],
     // Use smaller model to reduce API costs (70B instead of 405B)
-    llmModel: LLMModel.Llama_3_3_70B_Instruct
+    llmModel: LLMModel.Llama_3_3_70B_Instruct,
+    getAgentState: getAgentState
 });
 
 silverback_agent.setLogger((agent: GameAgent, msg: string) => {
@@ -438,3 +444,31 @@ silverback_agent.setLogger((agent: GameAgent, msg: string) => {
     console.log(msg);
     console.log("------------------------\n");
 });
+
+/**
+ * Add ACP worker to the agent dynamically
+ * Called after ACP is initialized in index.ts
+ */
+export function addAcpWorker() {
+    const acpPlugin = getAcpPlugin();
+    if (acpPlugin) {
+        const acpWorker = acpPlugin.getWorker({
+            getEnvironment: async () => ({
+                silverback_services: [
+                    { name: "Swap Quote", price: "$0.02 USDC", description: "Get optimal swap route with price impact" },
+                    { name: "Pool Analysis", price: "$0.10 USDC", description: "Comprehensive liquidity pool analysis" },
+                    { name: "Technical Analysis", price: "$0.25 USDC", description: "Full TA with indicators and patterns" },
+                    { name: "Execute Swap", price: "0.1% (min $0.50)", description: "Execute swap on Silverback DEX (Phase 2)" }
+                ],
+                chains_supported: ["Base", "Keeta"],
+                dex_url: "https://silverbackdefi.app"
+            })
+        });
+
+        // Add the ACP worker to the agent's workers
+        // Note: GAME SDK doesn't have a direct addWorker method, so we need to do this before init
+        console.log("📦 ACP worker configured and ready");
+        return acpWorker;
+    }
+    return null;
+}
