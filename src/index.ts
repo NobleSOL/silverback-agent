@@ -1,5 +1,6 @@
-import { silverback_agent } from './agent';
+import { silverback_agent, addAcpWorker } from './agent';
 import { stateManager } from './state/state-manager';
+import { initializeAcp, isAcpConfigured } from './acp';
 
 // Rate limiting configuration - IMPORTANT: Keep this high to avoid tweet spam
 const STEP_INTERVAL_MS = parseInt(process.env.STEP_INTERVAL_MS || '300000'); // Default: 5 minutes between steps
@@ -17,6 +18,16 @@ async function main() {
         console.log(`   Total Trades: ${state.metrics.totalTrades}`);
         console.log(`   Win Rate: ${(state.metrics.winRate * 100).toFixed(1)}%`);
         console.log(`   Total PnL: $${state.metrics.totalPnL.toFixed(2)}\n`);
+
+        // Initialize ACP if configured
+        if (isAcpConfigured()) {
+            console.log("🔗 ACP credentials detected, initializing...");
+            await initializeAcp();
+            addAcpWorker();
+        } else {
+            console.log("ℹ️  ACP not configured - skipping ACP integration");
+            console.log("   To enable: Set ACP_AGENT_WALLET_ADDRESS, ACP_PRIVATE_KEY, ACP_ENTITY_ID\n");
+        }
 
         // Initialize the agent with retry for rate limits
         let initRetries = 0;
@@ -37,7 +48,12 @@ async function main() {
         }
 
         console.log("✅ Silverback initialized successfully!");
-        console.log(`🔄 Running with ${STEP_INTERVAL_MS/1000}s interval between steps...\n`);
+        console.log(`🔄 Running with ${STEP_INTERVAL_MS/1000}s interval between steps...`);
+        if (isAcpConfigured()) {
+            console.log("🔗 ACP Provider mode: ACTIVE - Ready to accept jobs\n");
+        } else {
+            console.log("")
+        }
 
         // Run the agent with rate limiting and retry logic
         let consecutiveErrors = 0;
