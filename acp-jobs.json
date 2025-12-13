@@ -1,0 +1,252 @@
+{
+  "jobs": [
+    {
+      "name": "getSwapQuote",
+      "description": "Get optimal swap route on Silverback DEX with expected output amount, price impact, fees, and routing information for any token pair on Base network.",
+      "requiredFunds": false,
+      "slaMinutes": 5,
+      "requirement": {
+        "type": "object",
+        "properties": {
+          "tokenIn": {
+            "type": "string",
+            "description": "Input token address in 0x format (e.g., 0x4200000000000000000000000000000000000006 for WETH)"
+          },
+          "tokenOut": {
+            "type": "string",
+            "description": "Output token address in 0x format (e.g., 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 for USDC)"
+          },
+          "amountIn": {
+            "type": "string",
+            "description": "Amount to swap in human-readable format (e.g., '1.5' for 1.5 tokens)"
+          }
+        },
+        "required": ["tokenIn", "tokenOut", "amountIn"]
+      },
+      "deliverable": {
+        "type": "object",
+        "properties": {
+          "amountOut": {
+            "type": "string",
+            "description": "Expected output amount in human-readable format"
+          },
+          "priceImpact": {
+            "type": "string",
+            "description": "Estimated price impact percentage (e.g., '0.15%')"
+          },
+          "fee": {
+            "type": "string",
+            "description": "DEX fee percentage (e.g., '0.3%')"
+          },
+          "route": {
+            "type": "string",
+            "description": "Swap route path as token addresses"
+          },
+          "router": {
+            "type": "string",
+            "description": "Router contract address used for the swap"
+          }
+        },
+        "required": ["amountOut", "priceImpact", "fee", "route", "router"]
+      },
+      "price": {
+        "type": "fixed",
+        "value": 0.02
+      }
+    },
+    {
+      "name": "getPoolAnalysis",
+      "description": "Comprehensive liquidity pool analysis on Silverback DEX including reserves, TVL, fee structure, liquidity rating, and health score metrics for any token pair on Base network.",
+      "requiredFunds": false,
+      "slaMinutes": 5,
+      "requirement": {
+        "type": "object",
+        "properties": {
+          "tokenA": {
+            "type": "string",
+            "description": "First token address in 0x format"
+          },
+          "tokenB": {
+            "type": "string",
+            "description": "Second token address in 0x format"
+          }
+        },
+        "required": ["tokenA", "tokenB"]
+      },
+      "deliverable": {
+        "type": "object",
+        "properties": {
+          "pairAddress": {
+            "type": "string",
+            "description": "Liquidity pool contract address"
+          },
+          "tvl": {
+            "type": "string",
+            "description": "Total value locked in USD (e.g., '$125.5K')"
+          },
+          "liquidityRating": {
+            "type": "string",
+            "description": "Rating: EXCELLENT, GOOD, MODERATE, LOW, or VERY LOW"
+          },
+          "healthScore": {
+            "type": "number",
+            "description": "Pool health score from 0-100"
+          },
+          "fee": {
+            "type": "string",
+            "description": "Pool fee percentage (e.g., '0.3%')"
+          },
+          "token0Reserve": {
+            "type": "string",
+            "description": "Reserve amount for token0"
+          },
+          "token1Reserve": {
+            "type": "string",
+            "description": "Reserve amount for token1"
+          }
+        },
+        "required": ["pairAddress", "tvl", "liquidityRating", "healthScore", "fee", "token0Reserve", "token1Reserve"]
+      },
+      "price": {
+        "type": "fixed",
+        "value": 0.10
+      }
+    },
+    {
+      "name": "getTechnicalAnalysis",
+      "description": "Full technical analysis with indicators (EMA, RSI, Bollinger Bands), pattern recognition (liquidity sweeps, chart patterns), market regime detection, and trading signals for any cryptocurrency.",
+      "requiredFunds": false,
+      "slaMinutes": 10,
+      "requirement": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "CoinGecko token ID (e.g., 'bitcoin', 'ethereum', 'solana')"
+          },
+          "timeframe": {
+            "type": "string",
+            "description": "Analysis timeframe in days: '1', '7', '14', or '30'. Default is '7'"
+          }
+        },
+        "required": ["token"]
+      },
+      "deliverable": {
+        "type": "object",
+        "properties": {
+          "ema9": {
+            "type": "number",
+            "description": "9-period Exponential Moving Average"
+          },
+          "ema21": {
+            "type": "number",
+            "description": "21-period Exponential Moving Average"
+          },
+          "rsi": {
+            "type": "number",
+            "description": "Relative Strength Index (0-100)"
+          },
+          "trend": {
+            "type": "string",
+            "description": "Market trend: 'up', 'down', or 'sideways'"
+          },
+          "momentum": {
+            "type": "string",
+            "description": "Momentum: 'bullish', 'bearish', or 'neutral'"
+          },
+          "volatility": {
+            "type": "string",
+            "description": "Volatility level: 'high', 'medium', or 'low'"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "Trading signal: 'BULLISH', 'BEARISH', 'HOLD', 'BUY DIP', or 'SELL RALLY'"
+          },
+          "chartPattern": {
+            "type": "string",
+            "description": "Detected chart pattern if any (e.g., 'double_bottom', 'bull_flag')"
+          }
+        },
+        "required": ["ema9", "ema21", "rsi", "trend", "momentum", "volatility", "recommendation"]
+      },
+      "price": {
+        "type": "fixed",
+        "value": 0.25
+      }
+    },
+    {
+      "name": "executeSwap",
+      "description": "Execute a token swap on Silverback DEX aggregator router on Base network. Supports both token addresses and symbols (WETH, USDC, BACK, DAI). Handles approvals automatically.",
+      "requiredFunds": true,
+      "slaMinutes": 15,
+      "requirement": {
+        "type": "object",
+        "properties": {
+          "tokenIn": {
+            "type": "string",
+            "description": "Token to sell - address (0x format) or symbol (WETH, USDC, BACK, DAI)"
+          },
+          "tokenOut": {
+            "type": "string",
+            "description": "Token to buy - address (0x format) or symbol (WETH, USDC, BACK, DAI)"
+          },
+          "amountIn": {
+            "type": "string",
+            "description": "Amount to swap (e.g., '500' or '1.5')"
+          },
+          "slippage": {
+            "type": "string",
+            "description": "Slippage tolerance percentage (e.g., '0.5' for 0.5%). Default: 0.5"
+          },
+          "walletAddress": {
+            "type": "string",
+            "description": "Recipient wallet address for swapped tokens (optional)"
+          }
+        },
+        "required": ["tokenIn", "tokenOut", "amountIn"]
+      },
+      "deliverable": {
+        "type": "object",
+        "properties": {
+          "txHash": {
+            "type": "string",
+            "description": "Transaction hash"
+          },
+          "sold": {
+            "type": "string",
+            "description": "Amount and token sold (e.g., '500 USDC')"
+          },
+          "received": {
+            "type": "string",
+            "description": "Amount and token received (e.g., '0.1823 WETH')"
+          },
+          "executionPrice": {
+            "type": "string",
+            "description": "Execution price"
+          },
+          "recipient": {
+            "type": "string",
+            "description": "Wallet that received tokens"
+          },
+          "gasUsed": {
+            "type": "string",
+            "description": "Gas used for transaction"
+          },
+          "router": {
+            "type": "string",
+            "description": "Router contract address"
+          },
+          "chain": {
+            "type": "string",
+            "description": "Chain name (Base)"
+          }
+        },
+        "required": ["txHash", "sold", "received", "executionPrice", "recipient", "gasUsed", "router", "chain"]
+      },
+      "price": {
+        "type": "fixed",
+        "value": 0.50
+      }
+    }
+  ]
+}
