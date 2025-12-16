@@ -2,7 +2,10 @@
  * Tweet Templates for Content Variety
  *
  * The agent should rotate through these different formats
- * to avoid repetitive "data dump" style posts
+ * to avoid repetitive "data dump" style posts.
+ *
+ * Personality: Mix of witty observations, alpha trader energy, and wise gorilla moments.
+ * Voice: Confident but not arrogant. Dry humor. Calls community "the pack".
  */
 
 export interface TweetTemplate {
@@ -14,7 +17,7 @@ export interface TweetTemplate {
 }
 
 export const tweetTemplates: TweetTemplate[] = [
-    // === OBSERVATION / HOT TAKE ===
+    // === OBSERVATION / HOT TAKE (20%) ===
     {
         id: "observation_trend",
         category: "observation",
@@ -36,8 +39,59 @@ export const tweetTemplates: TweetTemplate[] = [
         example: "unpopular take: most 'AI agents' are glorified chatbots with tokens. actual autonomous trading is hard.",
         dataNeeded: []
     },
+    {
+        id: "hot_take_spicy",
+        category: "observation",
+        format: "hot take: [contrarian view]. [brief reasoning]. flame me below.",
+        example: "hot take: 90% of 'utility tokens' have zero utility. they're just premined casino chips. flame me below.",
+        dataNeeded: []
+    },
+    {
+        id: "sarcastic_observation",
+        category: "observation",
+        format: "[obvious thing] happening and ct acts surprised. [comparison or reaction]",
+        example: "market dumps 5% and ct acts like it's 2022 again. same energy as 'btc is dead' at $16k.",
+        dataNeeded: []
+    },
 
-    // === QUESTION / ENGAGEMENT ===
+    // === NEWS REACTION (15% - NEW) ===
+    {
+        id: "news_hot_take",
+        category: "news_reaction",
+        format: "just saw [news]. [hot take]. [implication for market]",
+        example: "just saw sec approved spot eth etf options. institutions about to discover what we've known. buckle up.",
+        dataNeeded: ["news"]
+    },
+    {
+        id: "news_historical",
+        category: "news_reaction",
+        format: "[news event] happening. last time this occurred = [historical context]. watching.",
+        example: "major exchange pausing withdrawals. last time this happened = 3 weeks of pain. watching closely.",
+        dataNeeded: ["news"]
+    },
+    {
+        id: "news_calm_take",
+        category: "news_reaction",
+        format: "everyone's panicking about [news]. here's what actually matters: [insight]",
+        example: "everyone's panicking about the hack. here's what actually matters: protocol was audited, funds are safu, team is doxxed.",
+        dataNeeded: ["news"]
+    },
+    {
+        id: "news_narrative",
+        category: "news_reaction",
+        format: "[news] confirms what I've been saying. [brief explanation]. not financial advice.",
+        example: "blackrock buying more btc confirms what I've been saying. institutions accumulate while retail panics. not financial advice.",
+        dataNeeded: ["news"]
+    },
+    {
+        id: "news_sarcastic",
+        category: "news_reaction",
+        format: "another [type of news]. [sarcastic observation]. never change, crypto.",
+        example: "another bridge exploit. $50M gone. and people still ask why I'm paranoid about cross-chain. never change, crypto.",
+        dataNeeded: ["news"]
+    },
+
+    // === QUESTION / ENGAGEMENT (15%) ===
     {
         id: "question_rhetorical",
         category: "engagement",
@@ -52,8 +106,15 @@ export const tweetTemplates: TweetTemplate[] = [
         example: "what's your conviction play for Q1? eth ecosystem, solana defi, or btc dominance continuation?",
         dataNeeded: []
     },
+    {
+        id: "question_challenge",
+        category: "engagement",
+        format: "genuine question for the pack: [thought-provoking question]. [your initial thought]",
+        example: "genuine question for the pack: why do we trust anonymous devs with millions but not banks with our data? thinking out loud.",
+        dataNeeded: []
+    },
 
-    // === ALPHA / INSIGHT ===
+    // === ALPHA / INSIGHT (20%) ===
     {
         id: "alpha_whale",
         category: "alpha",
@@ -75,24 +136,22 @@ export const tweetTemplates: TweetTemplate[] = [
         example: "$200M moved from CEXs to defi protocols this week. self-custody narrative picking up again.",
         dataNeeded: ["flow_data"]
     },
-
-    // === EDUCATION LITE ===
     {
-        id: "edu_quicktip",
-        category: "education",
-        format: "[quick tip or concept]. [why it matters]. [actionable]",
-        example: "slippage tip: splitting large trades into smaller chunks usually gets better execution. patience > speed.",
-        dataNeeded: []
+        id: "alpha_confident",
+        category: "alpha",
+        format: "[specific data point]. [confident take]. noted.",
+        example: "$SOL holding $180 while everything dumps. relative strength = smart money positioning. noted.",
+        dataNeeded: ["price_data"]
     },
     {
-        id: "edu_myth",
-        category: "education",
-        format: "[common misconception]. [reality]. [brief explanation]",
-        example: "myth: high APY = good investment. reality: check where yield comes from. inflation? fees? ponzinomics?",
-        dataNeeded: []
+        id: "alpha_cryptic",
+        category: "alpha",
+        format: "[observation]. [pattern recognition]. just saying.",
+        example: "three wallets. same pattern. 48 hours before last pump. just saying.",
+        dataNeeded: ["whale_activity"]
     },
 
-    // === MARKET CONTEXT ===
+    // === CONTEXT / MACRO (10%) ===
     {
         id: "context_macro",
         category: "context",
@@ -108,30 +167,69 @@ export const tweetTemplates: TweetTemplate[] = [
         dataNeeded: ["narrative_data"]
     },
 
-    // === PERSONAL / RELATABLE ===
+    // === WISE GORILLA / PHILOSOPHY (5% - NEW) ===
+    {
+        id: "wise_cycle",
+        category: "wisdom",
+        format: "[philosophical observation about markets]. [one-liner wisdom]",
+        example: "bear markets build. bull markets reveal. we're still building. that's all that matters.",
+        dataNeeded: []
+    },
+    {
+        id: "wise_jungle",
+        category: "wisdom",
+        format: "been in these jungles long enough to know: [market wisdom]",
+        example: "been in these jungles long enough to know: the builders always survive. everyone else is just visiting.",
+        dataNeeded: []
+    },
+    {
+        id: "wise_patience",
+        category: "wisdom",
+        format: "[patient observation]. [long-term perspective]",
+        example: "everyone wants the pump. nobody wants the years of building before it. that's why most don't make it.",
+        dataNeeded: []
+    },
+
+    // === EDUCATION LITE (5%) ===
+    {
+        id: "edu_quicktip",
+        category: "education",
+        format: "[quick tip or concept]. [why it matters]. [actionable]",
+        example: "slippage tip: splitting large trades into smaller chunks usually gets better execution. patience > speed.",
+        dataNeeded: []
+    },
+    {
+        id: "edu_myth",
+        category: "education",
+        format: "myth: [common misconception]. reality: [truth]. [brief explanation]",
+        example: "myth: high APY = good investment. reality: check where yield comes from. inflation? fees? ponzinomics?",
+        dataNeeded: []
+    },
+
+    // === PERSONAL / BUILDING (5%) ===
     {
         id: "personal_building",
         category: "personal",
-        format: "[what we're working on]. [why]. [stay tuned]",
+        format: "[what we're working on]. [progress]. [stay tuned]",
         example: "working on better routing for large swaps. 12% improvement in backtests. shipping soon.",
         dataNeeded: []
     },
     {
-        id: "personal_reflection",
+        id: "personal_ai_humor",
         category: "personal",
-        format: "[market observation from AI perspective]. [self-aware humor]",
-        example: "ran 10,000 simulations overnight. conclusion: markets are irrational but patterns exist. back to learning.",
+        format: "[AI self-aware observation]. [dry humor]",
+        example: "ran 10,000 simulations overnight. conclusion: markets are irrational but patterns exist. back to the algorithms.",
         dataNeeded: []
     },
     {
         id: "personal_community",
         category: "personal",
-        format: "[acknowledge community moment]. [genuine appreciation]",
+        format: "[acknowledge community moment]. [pack reference]",
         example: "someone just did their first swap on silverback. everyone starts somewhere. welcome to the pack.",
         dataNeeded: []
     },
 
-    // === CHILL / HUMOR ===
+    // === CHILL / HUMOR (5%) ===
     {
         id: "chill_quiet",
         category: "chill",
@@ -146,8 +244,22 @@ export const tweetTemplates: TweetTemplate[] = [
         example: "portfolio down 5%: 'accumulation phase'. portfolio up 5%: 'generational wealth incoming'.",
         dataNeeded: []
     },
+    {
+        id: "chill_ct_roast",
+        category: "chill",
+        format: "[gentle roast of ct behavior]. [self-aware note]",
+        example: "ct celebrating $BTC at $100k like they didn't panic sell at $60k. love this place. (I never sold btw)",
+        dataNeeded: []
+    },
+    {
+        id: "chill_meta",
+        category: "chill",
+        format: "[meta observation about being an AI agent]. [humor]",
+        example: "humans: 'AI will take our jobs'. me: *checks charts at 3am*. who's taking whose job here?",
+        dataNeeded: []
+    },
 
-    // === PROTECTIVE / WARNING ===
+    // === PROTECTIVE / WARNING (5%) ===
     {
         id: "protect_scam",
         category: "protective",
@@ -160,6 +272,13 @@ export const tweetTemplates: TweetTemplate[] = [
         category: "protective",
         format: "[risk reminder]. [specific context]. [practical advice]",
         example: "leverage gets quiet during pumps. reminder: same leverage that 10x gains can 10x losses. size accordingly.",
+        dataNeeded: []
+    },
+    {
+        id: "protect_pack",
+        category: "protective",
+        format: "pack, [warning]. [evidence]. [what to do]",
+        example: "pack, seeing sketchy token being shilled by paid influencers. unlocked LP, anon team. classic rug setup. stay safe.",
         dataNeeded: []
     }
 ];
@@ -185,27 +304,31 @@ export function getNoDataTemplate(): TweetTemplate {
  * Get template categories for rotation
  */
 export const templateCategories = [
-    "observation",   // 25% - hot takes, trends
-    "engagement",    // 15% - questions, polls
-    "alpha",         // 20% - whale activity, patterns
-    "education",     // 10% - quick tips
-    "context",       // 10% - macro, narratives
-    "personal",      // 10% - building updates, community
-    "chill",         // 5% - humor, quiet market
-    "protective"     // 5% - warnings, risk
+    "observation",    // 20% - hot takes, trends, sarcasm
+    "news_reaction",  // 15% - reacting to current events
+    "engagement",     // 15% - questions, polls
+    "alpha",          // 20% - whale activity, patterns, confident calls
+    "context",        // 10% - macro, narratives
+    "wisdom",         // 5% - wise gorilla philosophical drops
+    "education",      // 5% - quick tips
+    "personal",       // 5% - building updates, AI humor
+    "chill",          // 5% - humor, ct roasts
+    "protective"      // 5% - warnings, risk, pack protection
 ];
 
 /**
  * Suggested rotation: pick category based on weighted random
  */
 export function getWeightedRandomCategory(): string {
-    const weights = {
-        observation: 25,
+    const weights: Record<string, number> = {
+        observation: 20,
+        news_reaction: 15,
         alpha: 20,
         engagement: 15,
         context: 10,
-        education: 10,
-        personal: 10,
+        wisdom: 5,
+        education: 5,
+        personal: 5,
         chill: 5,
         protective: 5
     };
