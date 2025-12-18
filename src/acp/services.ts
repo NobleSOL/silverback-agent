@@ -229,14 +229,17 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
 
         const provider = getProvider();
 
-        // Get token decimals and symbols
-        const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
-        const decimalsIn = await tokenInContract.decimals();
-        const symbolIn = await tokenInContract.symbol();
+        // Get token decimals and symbols (use cache for known tokens)
+        console.log(`[SwapQuote] Getting token info for ${tokenInAddress} and ${tokenOutAddress}`);
+        const tokenInInfo = await getTokenInfo(tokenInAddress, provider);
+        const tokenOutInfo = await getTokenInfo(tokenOutAddress, provider);
 
-        const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, provider);
-        const decimalsOut = await tokenOutContract.decimals();
-        const symbolOut = await tokenOutContract.symbol();
+        const decimalsIn = tokenInInfo.decimals;
+        const symbolIn = tokenInInfo.symbol;
+        const decimalsOut = tokenOutInfo.decimals;
+        const symbolOut = tokenOutInfo.symbol;
+
+        console.log(`[SwapQuote] TokenIn: ${symbolIn} (${decimalsIn} decimals), TokenOut: ${symbolOut} (${decimalsOut} decimals)`);
 
         // Convert human amount to wei
         const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
@@ -648,6 +651,38 @@ const TOKEN_SYMBOLS: Record<string, string> = {
     'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
 };
+
+// Reverse mapping: address to token info (symbol + decimals)
+const TOKEN_INFO: Record<string, { symbol: string; decimals: number }> = {
+    '0x4200000000000000000000000000000000000006': { symbol: 'WETH', decimals: 18 },
+    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6 },
+    '0x558881c4959e9cf961a7e1815fcd6586906babd2': { symbol: 'BACK', decimals: 18 },
+    '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': { symbol: 'USDbC', decimals: 6 },
+    '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': { symbol: 'DAI', decimals: 18 },
+};
+
+// Get token info from cache or on-chain
+async function getTokenInfo(address: string, provider: ethers.JsonRpcProvider): Promise<{ symbol: string; decimals: number }> {
+    const lowerAddress = address.toLowerCase();
+
+    // Check cache first
+    if (TOKEN_INFO[lowerAddress]) {
+        return TOKEN_INFO[lowerAddress];
+    }
+
+    // Fallback to on-chain lookup
+    try {
+        const contract = new ethers.Contract(address, ERC20_ABI, provider);
+        const [symbol, decimals] = await Promise.all([
+            contract.symbol().catch(() => 'UNKNOWN'),
+            contract.decimals().catch(() => 18)
+        ]);
+        return { symbol, decimals: Number(decimals) };
+    } catch (e) {
+        console.log(`[getTokenInfo] Failed for ${address}, using defaults`);
+        return { symbol: 'UNKNOWN', decimals: 18 };
+    }
+}
 
 // Resolve token input (address or symbol) to address
 function resolveTokenAddress(tokenInput: string): string | null {
