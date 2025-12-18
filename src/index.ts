@@ -123,7 +123,14 @@ async function main() {
                             }
 
                             if (sellerJobs.length > 0) {
-                                console.log(`   Seller jobs:`, sellerJobs.map((j: any) => ({ id: j.id, phase: j.phase, service: j.serviceRequirement?.substring(0, 50) })));
+                                console.log(`   Seller jobs:`, sellerJobs.map((j: any) => ({
+                                    id: j.id || j.jobId,
+                                    phase: j.phase,
+                                    service: (j.serviceRequirement || j.requirement || j.service)?.substring?.(0, 50) || JSON.stringify(j).substring(0, 100)
+                                })));
+                                // Log full job object for debugging
+                                console.log(`   Full job object keys:`, Object.keys(sellerJobs[0]));
+                                console.log(`   Full job:`, JSON.stringify(sellerJobs[0]).substring(0, 500));
                             }
                             hasAcpJobs = sellerJobs.length > 0;
                         }
