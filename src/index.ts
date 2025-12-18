@@ -1,6 +1,7 @@
 import { createSilverbackAgent } from './agent';
 import { stateManager } from './state/state-manager';
 import { initializeAcp, isAcpConfigured, getAcpPlugin } from './acp';
+import { startX402Server, isX402Configured } from './x402';
 import { GameWorker } from '@virtuals-protocol/game';
 
 // Rate limiting configuration - IMPORTANT: Keep this high to avoid tweet spam
@@ -19,6 +20,11 @@ async function main() {
         console.log(`   Total Trades: ${state.metrics.totalTrades}`);
         console.log(`   Win Rate: ${(state.metrics.winRate * 100).toFixed(1)}%`);
         console.log(`   Total PnL: $${state.metrics.totalPnL.toFixed(2)}\n`);
+
+        // Start x402 server if configured
+        if (isX402Configured()) {
+            startX402Server();
+        }
 
         // Initialize ACP if configured and get worker
         let acpWorker: GameWorker | undefined;
