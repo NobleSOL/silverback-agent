@@ -58,12 +58,31 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
 
         // Build the ACP contract client
         // Note: Private key should NOT include the 0x prefix per ACP docs
-        const privateKey = ACP_PRIVATE_KEY!.startsWith('0x')
-            ? ACP_PRIVATE_KEY!.slice(2)
-            : ACP_PRIVATE_KEY!;
+        let privateKey = ACP_PRIVATE_KEY!.trim();
+
+        // Remove 0x prefix if present
+        if (privateKey.startsWith('0x')) {
+            privateKey = privateKey.slice(2);
+        }
+
+        // Validate private key format
+        if (privateKey.length !== 64) {
+            console.error(`❌ ACP_PRIVATE_KEY invalid length: ${privateKey.length} chars (expected 64)`);
+            console.error(`   First 4 chars: ${privateKey.substring(0, 4)}...`);
+            return null;
+        }
+
+        if (!/^[a-fA-F0-9]+$/.test(privateKey)) {
+            console.error(`❌ ACP_PRIVATE_KEY contains non-hex characters`);
+            return null;
+        }
+
+        console.log(`   Private key format: OK (64 hex chars)`);
+        console.log(`   Entity ID: ${ACP_ENTITY_ID}`);
+        console.log(`   Wallet: ${ACP_AGENT_WALLET_ADDRESS}`);
 
         const acpContractClient = await AcpContractClient.build(
-            privateKey as any, // SDK accepts string without 0x prefix
+            privateKey,
             parseInt(ACP_ENTITY_ID!, 10),
             ACP_AGENT_WALLET_ADDRESS! as `0x${string}`,
             undefined, // Use default RPC
