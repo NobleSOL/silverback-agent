@@ -92,11 +92,32 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
             baseAcpConfig // Base mainnet
         );
 
-        // Create ACP client
-        // Note: When using game-acp-plugin, job handling is done through the GAME agent worker
-        // The plugin's getWorker() returns functions that the agent uses to process jobs
+        // Create ACP client with WebSocket callbacks for job notifications
         const acpClient = new AcpClient({
-            acpContractClient
+            acpContractClient,
+            // Called when a new job is assigned to this agent
+            onNewTask: async (job: any) => {
+                console.log(`\n📥 [ACP WebSocket] New job received!`);
+                console.log(`   Job ID: ${job.id || job.jobId}`);
+                console.log(`   Phase: ${job.phase}`);
+                console.log(`   Service: ${JSON.stringify(job.serviceRequirement || job.requirement)?.substring(0, 100)}`);
+
+                // Process the job
+                try {
+                    const serviceReq = typeof job.serviceRequirement === 'string'
+                        ? job.serviceRequirement
+                        : JSON.stringify(job.serviceRequirement || job.requirement || {});
+
+                    const result = await processServiceRequest(serviceReq, serviceReq);
+                    console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 100)}`);
+                } catch (err) {
+                    console.error(`   ❌ Processing error:`, err);
+                }
+            },
+            // Called when we need to evaluate a job (as buyer)
+            onEvaluate: async (job: any) => {
+                console.log(`\n📋 [ACP WebSocket] Evaluation requested for job ${job.id || job.jobId}`);
+            }
         });
 
         // Create the ACP plugin
