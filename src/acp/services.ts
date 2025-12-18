@@ -118,6 +118,7 @@ export interface PoolAnalysisOutput {
     success: boolean;
     data?: {
         pairAddress: string;
+        dex?: string;
         token0: { address: string; symbol: string; reserve: string };
         token1: { address: string; symbol: string; reserve: string };
         tvl: string;
@@ -464,9 +465,20 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
     }
 }
 
+// Base chain DEX factories (V2 style)
+const BASE_DEX_FACTORIES = [
+    { name: 'Uniswap V2', address: '0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6' },
+    { name: 'SushiSwap', address: '0x71524B4f93c58fcbF659783284E38825f0622859' },
+    { name: 'BaseSwap', address: '0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB' },
+    { name: 'Aerodrome', address: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da' },
+    { name: 'Silverback', address: SILVERBACK_V2_FACTORY },
+];
+
 /**
  * Service 2: Liquidity Pool Deep Dive
  * Price: $0.10 USDC
+ *
+ * Checks multiple DEXes on Base chain for pool data
  */
 export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<PoolAnalysisOutput> {
     try {
@@ -478,31 +490,44 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
             tokenA = input.tokenA;
             tokenB = input.tokenB;
         } else if (input.tokenPair) {
-            // Handle "TOKEN_A/TOKEN_B" format
+            // Handle "TOKEN_A/TOKEN_B" format - try to resolve symbols
             const parts = input.tokenPair.split('/');
             if (parts.length === 2) {
-                // This would need token address lookup - simplified for now
-                return {
-                    success: false,
-                    error: "Please provide token addresses (tokenA and tokenB) instead of symbols"
-                };
+                const addrA = resolveTokenAddress(parts[0].trim());
+                const addrB = resolveTokenAddress(parts[1].trim());
+                if (addrA && addrB) {
+                    tokenA = addrA;
+                    tokenB = addrB;
+                } else {
+                    return {
+                        success: false,
+                        error: "Could not resolve token symbols. Use addresses or known symbols (WETH, USDC, BACK, DAI)"
+                    };
+                }
             }
         } else if (input.poolId) {
-            // Pool ID lookup - requires tokenA and tokenB instead
+            // Direct pool address provided
+            if (isValidAddress(input.poolId)) {
+                return await analyzePoolByAddress(input.poolId);
+            }
             return {
                 success: false,
-                error: "Please provide tokenA and tokenB addresses instead of poolId"
+                error: "Invalid pool address format"
             };
         }
 
         if (!tokenA || !tokenB) {
             return {
                 success: false,
-                error: "Please provide tokenA and tokenB addresses"
+                error: "Please provide tokenA and tokenB addresses, or tokenPair like 'WETH/USDC'"
             };
         }
 
-        if (!isValidAddress(tokenA) || !isValidAddress(tokenB)) {
+        // Resolve symbols to addresses if needed
+        const tokenAAddress = resolveTokenAddress(tokenA) || tokenA;
+        const tokenBAddress = resolveTokenAddress(tokenB) || tokenB;
+
+        if (!isValidAddress(tokenAAddress) || !isValidAddress(tokenBAddress)) {
             return {
                 success: false,
                 error: "Invalid token addresses"
@@ -510,23 +535,45 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
         }
 
         const provider = getProvider();
-        const factory = new ethers.Contract(SILVERBACK_V2_FACTORY, FACTORY_ABI, provider);
 
-        // Check if pair exists
-        const pairAddress = await factory.getPair(tokenA, tokenB);
+        // Check all DEX factories for this pair
+        let bestPool: {
+            dex: string;
+            pairAddress: string;
+            reserve0: bigint;
+            reserve1: bigint;
+            token0: string;
+            token1: string;
+        } | null = null;
 
-        if (pairAddress === ethers.ZeroAddress) {
-            return {
-                success: false,
-                error: "No liquidity pool exists for this pair on Silverback DEX"
-            };
+        for (const dex of BASE_DEX_FACTORIES) {
+            try {
+                const factory = new ethers.Contract(dex.address, FACTORY_ABI, provider);
+                const pairAddress = await factory.getPair(tokenAAddress, tokenBAddress);
+
+                if (pairAddress && pairAddress !== ethers.ZeroAddress) {
+                    const pair = new ethers.Contract(pairAddress, PAIR_ABI, provider);
+                    const [reserve0, reserve1] = await pair.getReserves();
+                    const token0 = await pair.token0();
+                    const token1 = await pair.token1();
+
+                    // Keep track of the pool with highest liquidity
+                    if (!bestPool || reserve0 + reserve1 > bestPool.reserve0 + bestPool.reserve1) {
+                        bestPool = { dex: dex.name, pairAddress, reserve0, reserve1, token0, token1 };
+                    }
+                }
+            } catch (e) {
+                // Factory might not support this pair or have different ABI
+                continue;
+            }
         }
 
-        // Get pair reserves
-        const pair = new ethers.Contract(pairAddress, PAIR_ABI, provider);
-        const [reserve0, reserve1] = await pair.getReserves();
-        const token0 = await pair.token0();
-        const token1 = await pair.token1();
+        if (!bestPool) {
+            // Try DeFiLlama or CoinGecko for pool info as fallback
+            return await getPoolInfoFromAPIs(tokenAAddress, tokenBAddress);
+        }
+
+        const { dex, pairAddress, reserve0, reserve1, token0, token1 } = bestPool;
 
         // Get token details
         const token0Contract = new ethers.Contract(token0, ERC20_ABI, provider);
@@ -551,13 +598,107 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
         else if (totalLiquidity > 10000) { liquidityRating = 'MODERATE'; healthScore = 60; }
         else if (totalLiquidity > 1000) { liquidityRating = 'LOW'; healthScore = 45; }
 
+        // Get USD values using CoinGecko
+        let tvlUSD = 'N/A';
+        try {
+            const token0Info = await getTokenInfo(token0, provider);
+            const token1Info = await getTokenInfo(token1, provider);
+
+            const coinIdMap: Record<string, string> = {
+                '0x4200000000000000000000000000000000000006': 'weth',
+                '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'usd-coin',
+                '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': 'bridged-usd-coin-base',
+                '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'dai',
+            };
+
+            const coinId0 = coinIdMap[token0.toLowerCase()];
+            const coinId1 = coinIdMap[token1.toLowerCase()];
+
+            if (coinId0 || coinId1) {
+                const ids = [coinId0, coinId1].filter(Boolean).join(',');
+                const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+                if (priceRes.ok) {
+                    const prices = await priceRes.json();
+                    let totalUSD = 0;
+                    if (coinId0 && prices[coinId0]?.usd) {
+                        totalUSD += reserve0Num * prices[coinId0].usd;
+                    }
+                    if (coinId1 && prices[coinId1]?.usd) {
+                        totalUSD += reserve1Num * prices[coinId1].usd;
+                    }
+                    if (totalUSD > 0) {
+                        tvlUSD = formatLargeNumber(totalUSD);
+                    }
+                }
+            }
+        } catch (e) {
+            // Keep tvlUSD as N/A
+        }
+
         return {
             success: true,
             data: {
                 pairAddress,
+                dex,
                 token0: { address: token0, symbol: symbol0, reserve: reserve0Formatted },
                 token1: { address: token1, symbol: symbol1, reserve: reserve1Formatted },
-                tvl: formatLargeNumber(totalLiquidity),
+                tvl: tvlUSD,
+                liquidityRating,
+                fee: dex === 'Aerodrome' ? '0.05-1%' : '0.3%',
+                volume24h: 'N/A',
+                apy: 'N/A',
+                utilization: 'N/A',
+                healthScore,
+                chain: 'Base',
+                timestamp: new Date().toISOString()
+            }
+        };
+    } catch (e) {
+        return {
+            success: false,
+            error: `Failed to analyze pool: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
+    }
+}
+
+/**
+ * Analyze a pool directly by its address
+ */
+async function analyzePoolByAddress(poolAddress: string): Promise<PoolAnalysisOutput> {
+    try {
+        const provider = getProvider();
+        const pair = new ethers.Contract(poolAddress, PAIR_ABI, provider);
+
+        const [reserves, token0, token1] = await Promise.all([
+            pair.getReserves(),
+            pair.token0(),
+            pair.token1()
+        ]);
+
+        const [reserve0, reserve1] = reserves;
+        const token0Info = await getTokenInfo(token0, provider);
+        const token1Info = await getTokenInfo(token1, provider);
+
+        const reserve0Formatted = ethers.formatUnits(reserve0, token0Info.decimals);
+        const reserve1Formatted = ethers.formatUnits(reserve1, token1Info.decimals);
+
+        const reserve0Num = parseFloat(reserve0Formatted);
+        const reserve1Num = parseFloat(reserve1Formatted);
+
+        let liquidityRating = 'VERY LOW';
+        let healthScore = 30;
+        if (reserve0Num + reserve1Num > 100000) { liquidityRating = 'EXCELLENT'; healthScore = 95; }
+        else if (reserve0Num + reserve1Num > 50000) { liquidityRating = 'GOOD'; healthScore = 80; }
+        else if (reserve0Num + reserve1Num > 10000) { liquidityRating = 'MODERATE'; healthScore = 60; }
+        else if (reserve0Num + reserve1Num > 1000) { liquidityRating = 'LOW'; healthScore = 45; }
+
+        return {
+            success: true,
+            data: {
+                pairAddress: poolAddress,
+                token0: { address: token0, symbol: token0Info.symbol, reserve: reserve0Formatted },
+                token1: { address: token1, symbol: token1Info.symbol, reserve: reserve1Formatted },
+                tvl: formatLargeNumber(reserve0Num + reserve1Num),
                 liquidityRating,
                 fee: '0.3%',
                 volume24h: 'N/A',
@@ -574,6 +715,55 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
             error: `Failed to analyze pool: ${e instanceof Error ? e.message : 'Unknown error'}`
         };
     }
+}
+
+/**
+ * Get pool info from external APIs when on-chain lookup fails
+ */
+async function getPoolInfoFromAPIs(tokenA: string, tokenB: string): Promise<PoolAnalysisOutput> {
+    try {
+        // Try DeFiLlama pools API
+        const llamaRes = await fetch(`https://yields.llama.fi/pools`);
+        if (llamaRes.ok) {
+            const data = await llamaRes.json();
+            const pools = data.data || [];
+
+            // Find pools on Base chain matching these tokens
+            const matchingPool = pools.find((p: any) =>
+                p.chain?.toLowerCase() === 'base' &&
+                p.underlyingTokens?.some((t: string) => t.toLowerCase() === tokenA.toLowerCase()) &&
+                p.underlyingTokens?.some((t: string) => t.toLowerCase() === tokenB.toLowerCase())
+            );
+
+            if (matchingPool) {
+                return {
+                    success: true,
+                    data: {
+                        pairAddress: matchingPool.pool || 'N/A',
+                        dex: matchingPool.project || 'Unknown',
+                        token0: { address: tokenA, symbol: matchingPool.symbol?.split('-')[0] || 'TOKEN0', reserve: 'N/A' },
+                        token1: { address: tokenB, symbol: matchingPool.symbol?.split('-')[1] || 'TOKEN1', reserve: 'N/A' },
+                        tvl: formatLargeNumber(matchingPool.tvlUsd || 0),
+                        liquidityRating: matchingPool.tvlUsd > 100000 ? 'GOOD' : 'LOW',
+                        fee: 'Variable',
+                        volume24h: 'N/A',
+                        apy: matchingPool.apy ? `${matchingPool.apy.toFixed(2)}%` : 'N/A',
+                        utilization: 'N/A',
+                        healthScore: matchingPool.tvlUsd > 100000 ? 80 : 50,
+                        chain: 'Base',
+                        timestamp: new Date().toISOString()
+                    }
+                };
+            }
+        }
+    } catch (e) {
+        console.log('[PoolAnalysis] DeFiLlama error:', e);
+    }
+
+    return {
+        success: false,
+        error: "No liquidity pool found for this pair on Base chain. Checked: Uniswap, SushiSwap, BaseSwap, Aerodrome, Silverback"
+    };
 }
 
 /**
