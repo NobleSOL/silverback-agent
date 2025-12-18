@@ -12,8 +12,7 @@
  */
 
 import AcpPlugin, { AcpState } from "@virtuals-protocol/game-acp-plugin";
-import AcpClient, { AcpContractClient, baseAcpConfig, AcpJob } from "@virtuals-protocol/acp-node";
-import { processServiceRequest } from "./services";
+import AcpClient, { AcpContractClient, baseAcpConfig } from "@virtuals-protocol/acp-node";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -92,66 +91,11 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
             baseAcpConfig // Base mainnet
         );
 
-        // Create ACP client with job handlers
+        // Create ACP client
+        // Note: When using game-acp-plugin, job handling is done through the GAME agent worker
+        // The plugin's getWorker() returns functions that the agent uses to process jobs
         const acpClient = new AcpClient({
-            acpContractClient,
-            // Handler for new incoming job requests
-            onNewTask: async (job: AcpJob) => {
-                console.log(`\n📥 New ACP job received: ${job.id}`);
-                console.log(`   Service: ${job.serviceRequirement?.substring(0, 100)}...`);
-                console.log(`   From: ${job.clientEntityId}`);
-                console.log(`   Price: ${job.price} USDC`);
-
-                try {
-                    // Auto-accept jobs - we're a service provider
-                    console.log(`   ✅ Accepting job ${job.id}...`);
-                    await job.respond(true);
-                    console.log(`   ✅ Job accepted, processing...`);
-
-                    // Process the service request
-                    const result = await processServiceRequest(
-                        job.serviceRequirement || '',
-                        job.serviceRequirement || ''
-                    );
-
-                    // Submit the deliverable
-                    console.log(`   📤 Submitting deliverable for job ${job.id}...`);
-                    await job.submit(result.deliverable);
-                    console.log(`   ✅ Deliverable submitted for job ${job.id}`);
-
-                } catch (error) {
-                    console.error(`   ❌ Failed to process job ${job.id}:`, error);
-                    try {
-                        // Try to reject if we failed to process
-                        await job.respond(false);
-                    } catch {
-                        // Ignore rejection errors
-                    }
-                }
-            },
-            // Handler for evaluation phase (when we're the buyer)
-            onEvaluate: async (job: AcpJob) => {
-                console.log(`\n📋 Evaluating job ${job.id}...`);
-                console.log(`   Deliverable: ${job.deliverable?.substring(0, 100)}...`);
-
-                try {
-                    // Parse the deliverable to check if it was successful
-                    const result = JSON.parse(job.deliverable || '{}');
-
-                    if (result.success) {
-                        await job.evaluate(true, "Deliverable meets requirements - service completed successfully");
-                    } else {
-                        await job.evaluate(false, `Service failed: ${result.error || 'Unknown error'}`);
-                    }
-                } catch (e) {
-                    // If we can't parse, accept if there's any content
-                    if (job.deliverable && job.deliverable.length > 10) {
-                        await job.evaluate(true, "Deliverable received");
-                    } else {
-                        await job.evaluate(false, "Invalid or empty deliverable");
-                    }
-                }
-            }
+            acpContractClient
         });
 
         // Create the ACP plugin
