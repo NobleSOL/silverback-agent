@@ -238,6 +238,7 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
 
         // Try OpenOcean aggregator first for best prices
         try {
+            console.log(`[SwapQuote] Trying OpenOcean for ${amountIn} ${symbolIn} → ${symbolOut}`);
             const gasResponse = await fetch(`${OPENOCEAN_API}/gasPrice`);
             const gasData = gasResponse.ok ? await gasResponse.json() : { standard: '1000000000' };
 
@@ -247,10 +248,13 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
                 `amount=${amountInWei.toString()}&` +
                 `gasPrice=${gasData.standard || '1000000000'}`;
 
+            console.log(`[SwapQuote] OpenOcean URL: ${quoteUrl}`);
             const quoteResponse = await fetch(quoteUrl);
 
+            console.log(`[SwapQuote] OpenOcean response status: ${quoteResponse.status}`);
             if (quoteResponse.ok) {
                 const quoteData = await quoteResponse.json();
+                console.log(`[SwapQuote] OpenOcean data:`, JSON.stringify(quoteData).substring(0, 300));
 
                 if (quoteData.data && quoteData.data.outAmount) {
                     const amountOutHuman = ethers.formatUnits(quoteData.data.outAmount, decimalsOut);
