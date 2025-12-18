@@ -104,6 +104,7 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
 
                 console.log(`\n📥 [ACP WebSocket] Job event!`);
                 console.log(`   Job ID: ${jobId}, Phase: ${phase}, MemoId: ${memoId}`);
+                console.log(`   Job methods:`, Object.keys(job).filter(k => typeof job[k] === 'function'));
 
                 try {
                     // Get service details
@@ -117,11 +118,14 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                     // Phase 0 (REQUEST) - Accept the job
                     if (phase === 0 || phase === 'request') {
                         console.log(`   🔄 Phase 0: Accepting job...`);
-                        if (acpClient && memoId) {
+                        if (typeof job.respond === 'function') {
+                            await job.respond(true);
+                            console.log(`   ✅ Job accepted via job.respond()`);
+                        } else if (acpClient && memoId) {
                             await (acpClient as any).respondJob(jobId, memoId, true, "Job accepted by Silverback");
-                            console.log(`   ✅ Job accepted`);
+                            console.log(`   ✅ Job accepted via acpClient.respondJob()`);
                         } else {
-                            console.log(`   ⚠️ Cannot respond - acpClient: ${!!acpClient}, memoId: ${memoId}`);
+                            console.log(`   ⚠️ Cannot respond - no respond method available`);
                         }
                     }
                     // Phase 2 (TRANSACTION) - Deliver the service
@@ -133,9 +137,12 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                         console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
 
                         // Deliver the result
-                        if (acpClient) {
+                        if (typeof job.deliver === 'function') {
+                            await job.deliver(result.deliverable);
+                            console.log(`   ✅ Deliverable submitted via job.deliver()`);
+                        } else if (acpClient) {
                             await (acpClient as any).deliverJob(jobId, result.deliverable);
-                            console.log(`   ✅ Deliverable submitted`);
+                            console.log(`   ✅ Deliverable submitted via acpClient.deliverJob()`);
                         }
                     }
                     else {
