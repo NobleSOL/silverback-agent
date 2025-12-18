@@ -575,13 +575,14 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
 
         const { dex, pairAddress, reserve0, reserve1, token0, token1 } = bestPool;
 
-        // Get token details
-        const token0Contract = new ethers.Contract(token0, ERC20_ABI, provider);
-        const token1Contract = new ethers.Contract(token1, ERC20_ABI, provider);
-        const symbol0 = await token0Contract.symbol();
-        const symbol1 = await token1Contract.symbol();
-        const decimals0 = await token0Contract.decimals();
-        const decimals1 = await token1Contract.decimals();
+        // Get token details using cached info with fallback
+        const token0Info = await getTokenInfo(token0, provider);
+        const token1Info = await getTokenInfo(token1, provider);
+
+        const symbol0 = token0Info.symbol;
+        const symbol1 = token1Info.symbol;
+        const decimals0 = token0Info.decimals;
+        const decimals1 = token1Info.decimals;
 
         const reserve0Formatted = ethers.formatUnits(reserve0, decimals0);
         const reserve1Formatted = ethers.formatUnits(reserve1, decimals1);
@@ -601,9 +602,6 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
         // Get USD values using CoinGecko
         let tvlUSD = 'N/A';
         try {
-            const token0Info = await getTokenInfo(token0, provider);
-            const token1Info = await getTokenInfo(token1, provider);
-
             const coinIdMap: Record<string, string> = {
                 '0x4200000000000000000000000000000000000006': 'weth',
                 '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'usd-coin',
