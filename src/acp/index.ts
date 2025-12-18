@@ -81,8 +81,11 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         console.log(`   Entity ID: ${ACP_ENTITY_ID}`);
         console.log(`   Wallet: ${ACP_AGENT_WALLET_ADDRESS}`);
 
+        // Add 0x prefix for the SDK
+        const privateKeyWithPrefix = `0x${privateKey}` as `0x${string}`;
+
         const acpContractClient = await AcpContractClient.build(
-            privateKey,
+            privateKeyWithPrefix,
             parseInt(ACP_ENTITY_ID!, 10),
             ACP_AGENT_WALLET_ADDRESS! as `0x${string}`,
             undefined, // Use default RPC
