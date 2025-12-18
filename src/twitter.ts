@@ -1,5 +1,6 @@
 import TwitterPlugin from "@virtuals-protocol/game-twitter-plugin";
 import { TwitterApi } from "@virtuals-protocol/game-twitter-node";
+import { ethers } from 'ethers';
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -16,6 +17,17 @@ export const twitterClient = new TwitterApi({
 export const twitterPlugin = new TwitterPlugin({
     twitterClient: twitterClient,
 });
+
+// Base Chain Configuration
+const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const OPENOCEAN_API = 'https://open-api.openocean.finance/v4/base';
+const SILVERBACK_V2_FACTORY = '0x9cd714C51586B52DD56EbD19E3676de65eBf44Ae';
+const WETH = '0x4200000000000000000000000000000000000006';
+const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
+const FACTORY_ABI = [
+    'function allPairsLength() view returns (uint256)',
+];
 
 // Cache for own user ID to prevent self-replies
 let ownUserId: string | null = null;
@@ -38,31 +50,73 @@ export async function getOwnUserId(): Promise<string | null> {
 }
 
 /**
+ * Get DEX stats from Base chain
+ */
+async function getDexStats(): Promise<{
+    pairCount: string;
+    ethPrice: string;
+    gasPrice: string;
+    dexCount: number;
+}> {
+    // Get pair count from Silverback factory
+    let pairCount = 'N/A';
+    try {
+        const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
+        const factory = new ethers.Contract(SILVERBACK_V2_FACTORY, FACTORY_ABI, provider);
+        const count = await factory.allPairsLength();
+        pairCount = count.toString();
+    } catch {
+        // Factory query failed
+    }
+
+    // Get ETH price and DEX count from OpenOcean
+    let ethPrice = 'N/A';
+    let gasPrice = 'N/A';
+    let dexCount = 0;
+
+    try {
+        const gasResponse = await fetch(`${OPENOCEAN_API}/gasPrice`);
+        const gasData = gasResponse.ok ? await gasResponse.json() : null;
+        if (gasData?.standard) {
+            gasPrice = (parseFloat(gasData.standard) / 1e9).toFixed(2) + ' gwei';
+        }
+
+        const amountIn = ethers.parseUnits('1', 18);
+        const quoteResponse = await fetch(
+            `${OPENOCEAN_API}/quote?inTokenAddress=${WETH}&outTokenAddress=${USDC}&amount=${amountIn}&gasPrice=${gasData?.standard || '1000000000'}`
+        );
+
+        if (quoteResponse.ok) {
+            const quoteData = await quoteResponse.json();
+            if (quoteData.data?.outAmount) {
+                ethPrice = '$' + (parseFloat(quoteData.data.outAmount) / 1e6).toFixed(2);
+                dexCount = quoteData.data.dexes?.length || 0;
+            }
+        }
+    } catch {
+        // OpenOcean query failed
+    }
+
+    return { pairCount, ethPrice, gasPrice, dexCount };
+}
+
+/**
  * Post daily Silverback DEX statistics to Twitter
  */
 export async function postDailyStats() {
     try {
-        const DEX_API_URL = process.env.DEX_API_URL || 'https://dexkeeta.onrender.com/api';
-        
-        // Fetch pool data
-        const poolsResponse = await fetch(`${DEX_API_URL}/anchor/pools`);
-        const pools = await poolsResponse.json();
-        
-        // Calculate metrics
-        const activePools = pools.filter((p: any) => p.status === 'active');
-        const totalLiquidity = pools.reduce((sum: number, p: any) => {
-            return sum + (parseFloat(p.reserve0USD || '0') + parseFloat(p.reserve1USD || '0'));
-        }, 0);
-        
+        const stats = await getDexStats();
+
         const tweet = `🦍 Silverback DEX Daily Update
 
-📊 Active Pools: ${activePools.length}
-💧 Total Liquidity: $${totalLiquidity.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-⚡ Network: Keeta (400ms blocks)
+📊 Silverback Pools: ${stats.pairCount}
+⛽ Gas: ${stats.gasPrice}
+💹 ETH: ${stats.ethPrice}
+🔄 DEXs Aggregated: ${stats.dexCount}
 
-Trade on Silverback DEX → dexkeeta.onrender.com
+Trade on Base → silverbackdefi.app
 
-#DeFi #Keeta #Silverback`;
+#DeFi #Base #Silverback $BACK`;
 
         await twitterClient.v2.tweet(tweet);
         console.log('✅ Daily stats posted to Twitter');
@@ -84,16 +138,17 @@ export async function announceNewPool(poolData: {
 }) {
     try {
         const totalLiquidity = parseFloat(poolData.reserve0USD) + parseFloat(poolData.reserve1USD);
-        
+
         const tweet = `🎉 New Pool on Silverback DEX!
 
 🔄 ${poolData.token0Symbol}/${poolData.token1Symbol}
 💧 Initial Liquidity: $${totalLiquidity.toLocaleString()}
 💰 Fee: ${poolData.feeBps / 100}%
+⛓️ Network: Base
 
-Start trading now → dexkeeta.onrender.com
+Trade now → silverbackdefi.app
 
-#NewListing #DeFi`;
+#NewListing #DeFi #Base $BACK`;
 
         await twitterClient.v2.tweet(tweet);
         console.log(`✅ Announced new ${poolData.token0Symbol}/${poolData.token1Symbol} pool`);

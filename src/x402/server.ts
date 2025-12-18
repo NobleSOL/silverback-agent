@@ -317,46 +317,67 @@ app.post('/api/v1/execute-swap', async (req: Request, res: Response) => {
 
 /**
  * DEX Metrics - $0.05
- * Overall DEX statistics
+ * Overall DEX statistics from Base chain via OpenOcean
  */
 app.get('/api/v1/dex-metrics', async (_req: Request, res: Response) => {
     try {
-        // Fetch from Keeta DEX API
-        const DEX_API_URL = process.env.DEX_API_URL || 'https://dexkeeta.onrender.com/api';
-        const response = await fetch(`${DEX_API_URL}/anchor/pools`);
+        // Fetch gas price from OpenOcean Base
+        const gasResponse = await fetch('https://open-api.openocean.finance/v4/base/gasPrice');
+        const gasData = gasResponse.ok ? await gasResponse.json() : null;
 
-        if (!response.ok) {
-            res.status(502).json({
-                success: false,
-                error: 'Failed to fetch DEX metrics'
-            });
-            return;
-        }
+        // Get sample quotes to show routing is working
+        // WETH -> USDC quote for $1000 worth
+        const weth = '0x4200000000000000000000000000000000000006';
+        const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+        const amountIn = '1000000000000000000'; // 1 WETH in wei
 
-        const pools = await response.json();
-        const activePools = pools.filter((p: any) => p.status === 'active' || !p.status);
+        const quoteResponse = await fetch(
+            `https://open-api.openocean.finance/v4/base/quote?` +
+            `inTokenAddress=${weth}&outTokenAddress=${usdc}&amount=${amountIn}&gasPrice=${gasData?.standard || '1000000000'}`
+        );
 
-        // Calculate aggregate metrics
-        let totalLiquidity = 0;
-        let totalVolume24h = 0;
-
-        for (const pool of pools) {
-            const reserveA = parseFloat(pool.reserve_a) || 0;
-            const reserveB = parseFloat(pool.reserve_b) || 0;
-            totalLiquidity += reserveA + reserveB;
-            totalVolume24h += parseFloat(pool.volume_24h) || 0;
+        let routingInfo = null;
+        if (quoteResponse.ok) {
+            const quoteData = await quoteResponse.json();
+            if (quoteData.data) {
+                routingInfo = {
+                    samplePair: 'WETH/USDC',
+                    estimatedOut: quoteData.data.outAmount ?
+                        (parseFloat(quoteData.data.outAmount) / 1e6).toFixed(2) + ' USDC' : 'N/A',
+                    priceImpact: quoteData.data.estimatedPriceImpact || 'N/A',
+                    dexesUsed: quoteData.data.dexes?.length || 0,
+                    routesSplit: quoteData.data.path?.routes?.length || 1
+                };
+            }
         }
 
         res.json({
             success: true,
             data: {
-                totalPools: pools.length,
-                activePools: activePools.length,
-                totalLiquidity: formatLargeNumber(totalLiquidity),
-                volume24h: formatLargeNumber(totalVolume24h),
+                network: 'Base',
+                chainId: 8453,
+                aggregator: 'OpenOcean',
                 protocol: 'Silverback DEX',
-                networks: ['Base', 'Keeta'],
                 router: '0x565cBf0F3eAdD873212Db91896e9a548f6D64894',
+                gasPrice: {
+                    standard: gasData?.standard ? (parseFloat(gasData.standard) / 1e9).toFixed(2) + ' gwei' : 'N/A',
+                    fast: gasData?.fast ? (parseFloat(gasData.fast) / 1e9).toFixed(2) + ' gwei' : 'N/A',
+                    instant: gasData?.instant ? (parseFloat(gasData.instant) / 1e9).toFixed(2) + ' gwei' : 'N/A'
+                },
+                routing: routingInfo,
+                capabilities: [
+                    'Multi-DEX aggregation via OpenOcean',
+                    'Best price routing across Uniswap, Sushiswap, Curve, etc.',
+                    'Swap execution on Base chain',
+                    'Technical analysis & backtesting'
+                ],
+                supportedTokens: {
+                    WETH: weth,
+                    USDC: usdc,
+                    BACK: '0x558881c4959e9cf961a7E1815FCD6586906babd2',
+                    USDbC: '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+                    DAI: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb'
+                },
                 timestamp: new Date().toISOString()
             }
         });

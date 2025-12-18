@@ -11,31 +11,34 @@ export const SILVERBACK_KNOWLEDGE = `
 Documentation: https://docs.silverbackdefi.app/
 
 == NETWORK STATUS ==
-- Base Network: LIVE ✅
-- Keeta Network: Coming Soon (launching soon)
+- Base Network: LIVE ✅ (Primary network)
+- Keeta Network: Future expansion (not currently active)
 
-== SUPPORTED NETWORKS ==
+== BASE NETWORK (Primary) ==
 
-BASE NETWORK (Ethereum L2 by Coinbase):
+Network Details:
+- Chain: Base (Ethereum L2 by Coinbase)
+- Chain ID: 8453
 - Settlement: ~2 seconds
 - Gas Token: ETH
-- Wallet: Any Web3 wallet (MetaMask, Coinbase Wallet, etc.)
-- Features:
-  * Classic 50/50 liquidity pools
-  * Concentrated pools with custom price ranges
-  * OpenOcean aggregation for best rates across DEXs
-  * Deep liquidity on popular trading pairs
-  * 0.3% swap fee
+- Block Explorer: https://basescan.org
 
-KEETA NETWORK (High-speed DAG-based blockchain):
-- Settlement: ~400ms (ultra-fast)
-- Gas Token: KTA
-- Wallet: Keythings browser extension required
-- Features:
-  * AMM pools
-  * FX Anchor Trading (access official network anchors)
-  * Custom liquidity pools with custom fees (0.01% - 10%)
-  * Lower transaction costs
+Silverback Contracts on Base:
+- Router: 0x565cBf0F3eAdD873212Db91896e9a548f6D64894
+- V2 Factory: 0x9cd714C51586B52DD56EbD19E3676de65eBf44Ae
+- $BACK Token: 0x558881c4959e9cf961a7E1815FCD6586906babd2
+
+Common Base Tokens:
+- WETH: 0x4200000000000000000000000000000000000006
+- USDC: 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913
+- USDbC: 0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA
+- DAI: 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb
+
+Features:
+- Classic 50/50 liquidity pools (Uniswap V2 style)
+- OpenOcean aggregation for best rates across 30+ DEXs
+- 0.3% swap fee on Silverback pools
+- Any Web3 wallet supported (MetaMask, Coinbase Wallet, Rainbow, etc.)
 
 == $BACK TOKEN ==
 
@@ -43,7 +46,8 @@ Token Details:
 - Name: Silverback
 - Ticker: $BACK
 - Network: Base
-- Launch: Virtuals Protocol (Unicorn Tokenomics model)
+- Contract: 0x558881c4959e9cf961a7E1815FCD6586906babd2
+- Launch: Virtuals Protocol
 
 Non-Inflationary Rewards Model:
 1. Protocol generates revenue from trading fees
@@ -54,9 +58,9 @@ Key: No new supply = no dilution. Sustainable yield backed by real earnings.
 
 Revenue Sources:
 - DEX swap fees (portion of 0.3% per transaction)
-- Anchor Pool operations (Keeta)
 - AI agent treasury trading profits
-- Cross-chain arbitrage returns
+- x402 API service payments
+- ACP (Agent Commerce Protocol) service fees
 
 Token Utility:
 - Staking: Earn share of protocol revenue
@@ -69,27 +73,37 @@ Revenue → Buybacks → Staking Rewards → Less Selling Pressure → Price Sup
 
 == SILVERBACK AI AGENT ==
 
-Silverback is an autonomous AI trading agent that:
-- Executes systematic trading strategies
+Silverback is an autonomous AI trading agent on Virtuals Protocol that:
+- Executes systematic trading strategies on Base
 - Manages treasury for protocol revenue
 - Shares profits with $BACK stakers through buybacks
 - Educates community on DeFi concepts
 - Protects community from scams and risks
+- Provides paid DeFi intelligence services via x402 and ACP
 
-All trading revenue flows back to $BACK holders, creating alignment between agent performance and community benefit.
+Revenue-Generating Services:
+1. Swap Quotes ($0.02) - Best price routing via OpenOcean
+2. Pool Analysis ($0.10) - Liquidity pool deep dives
+3. Technical Analysis ($0.25) - Full TA with indicators
+4. Execute Swap ($0.50) - Trade execution on Base
+5. DEX Metrics ($0.05) - Network statistics
+6. Backtesting ($1.00) - Strategy backtesting
+
+All service revenue flows back to $BACK holders via buybacks.
 
 == KEY LINKS ==
 - DEX (Base): https://silverbackdefi.app
-- DEX (Keeta): https://dexkeeta.onrender.com (coming soon)
 - Documentation: https://docs.silverbackdefi.app
 - Twitter: @SilverbackAgent
+- Block Explorer: https://basescan.org
 
 == IMPORTANT FACTS ==
 - Silverback DEX is LIVE on Base network
-- Keeta network support is launching soon
+- Uses OpenOcean aggregator for best swap rates
 - $BACK token uses non-inflationary tokenomics
 - All protocol revenue goes to $BACK stakers via buybacks
 - The AI agent is autonomous and trades with its own treasury
+- Services available via x402 (HTTP payments) and ACP (agent-to-agent)
 `;
 
 export default SILVERBACK_KNOWLEDGE;

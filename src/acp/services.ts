@@ -59,8 +59,8 @@ const ERC20_ABI = [
     'function approve(address spender, uint256 amount) returns (bool)',
 ];
 
-// Keeta DEX API
-const DEX_API_URL = process.env.DEX_API_URL || 'https://dexkeeta.onrender.com/api';
+// OpenOcean API for Base chain aggregation
+const OPENOCEAN_API = 'https://open-api.openocean.finance/v4/base';
 
 // CoinGecko API
 const COINGECKO_API = process.env.COINGECKO_API_KEY
@@ -94,6 +94,9 @@ export interface SwapQuoteOutput {
         route: string[];
         router: string;
         chain: string;
+        aggregator?: string;
+        dexesUsed?: number;
+        estimatedGas?: string;
         timestamp: string;
     };
     error?: string;
@@ -194,6 +197,8 @@ export interface ExecuteSwapOutput {
 /**
  * Service 1: Get Optimal Swap Route
  * Price: $0.02 USDC
+ *
+ * Uses OpenOcean aggregator for best prices across multiple DEXs on Base
  */
 export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteOutput> {
     try {
@@ -206,51 +211,102 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             };
         }
 
-        if (!isValidAddress(tokenIn) || !isValidAddress(tokenOut)) {
+        // Resolve token addresses (support symbols like WETH, USDC)
+        const tokenInAddress = resolveTokenAddress(tokenIn);
+        const tokenOutAddress = resolveTokenAddress(tokenOut);
+
+        if (!tokenInAddress || !tokenOutAddress) {
             return {
                 success: false,
-                error: "Invalid token addresses. Must be 0x format."
+                error: "Invalid token. Use 0x address or symbol (WETH, USDC, BACK, DAI)"
             };
         }
 
         const provider = getProvider();
-        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
 
         // Get token decimals
-        const tokenInContract = new ethers.Contract(tokenIn, ERC20_ABI, provider);
+        const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
         const decimalsIn = await tokenInContract.decimals();
+        const symbolIn = await tokenInContract.symbol();
 
-        const tokenOutContract = new ethers.Contract(tokenOut, ERC20_ABI, provider);
+        const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, provider);
         const decimalsOut = await tokenOutContract.decimals();
+        const symbolOut = await tokenOutContract.symbol();
 
         // Convert human amount to wei
         const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
 
-        // Get quote from router
-        const path = [tokenIn, tokenOut];
+        // Try OpenOcean aggregator first for best prices
+        try {
+            const gasResponse = await fetch(`${OPENOCEAN_API}/gasPrice`);
+            const gasData = gasResponse.ok ? await gasResponse.json() : { standard: '1000000000' };
+
+            const quoteUrl = `${OPENOCEAN_API}/quote?` +
+                `inTokenAddress=${tokenInAddress}&` +
+                `outTokenAddress=${tokenOutAddress}&` +
+                `amount=${amountInWei.toString()}&` +
+                `gasPrice=${gasData.standard || '1000000000'}`;
+
+            const quoteResponse = await fetch(quoteUrl);
+
+            if (quoteResponse.ok) {
+                const quoteData = await quoteResponse.json();
+
+                if (quoteData.data && quoteData.data.outAmount) {
+                    const amountOutHuman = ethers.formatUnits(quoteData.data.outAmount, decimalsOut);
+
+                    return {
+                        success: true,
+                        data: {
+                            tokenIn: tokenInAddress,
+                            tokenOut: tokenOutAddress,
+                            amountIn,
+                            amountOut: amountOutHuman,
+                            priceImpact: (quoteData.data.estimatedPriceImpact || '0') + '%',
+                            fee: 'Variable (aggregated)',
+                            route: quoteData.data.path?.routes?.map((r: any) => r.subRoutes?.[0]?.from?.symbol || 'Unknown') || [symbolIn, symbolOut],
+                            router: SILVERBACK_UNIFIED_ROUTER,
+                            chain: 'Base',
+                            aggregator: 'OpenOcean',
+                            dexesUsed: quoteData.data.dexes?.length || 1,
+                            estimatedGas: quoteData.data.estimatedGas || 'N/A',
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+                }
+            }
+        } catch (ooError) {
+            // OpenOcean failed, fall back to direct router
+            console.log('OpenOcean quote failed, falling back to direct router:', ooError);
+        }
+
+        // Fallback: Direct router query
+        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
+        const path = [tokenInAddress, tokenOutAddress];
         const amounts = await router.getAmountsOut(amountInWei, path);
 
         const amountOutWei = amounts[1];
         const amountOutHuman = ethers.formatUnits(amountOutWei, decimalsOut);
 
-        // Calculate price impact
+        // Calculate price impact estimate
         const amountInNum = parseFloat(amountIn);
         const amountOutNum = parseFloat(amountOutHuman);
-        const expectedOut = amountInNum * 0.997; // 0.3% fee
-        const priceImpact = ((expectedOut - amountOutNum) / expectedOut) * 100;
+        const expectedOut = amountInNum * 0.997; // 0.3% fee assumption
+        const priceImpact = Math.abs(((expectedOut - amountOutNum) / expectedOut) * 100);
 
         return {
             success: true,
             data: {
-                tokenIn,
-                tokenOut,
+                tokenIn: tokenInAddress,
+                tokenOut: tokenOutAddress,
                 amountIn,
                 amountOut: amountOutHuman,
-                priceImpact: Math.abs(priceImpact).toFixed(2) + '%',
+                priceImpact: priceImpact.toFixed(2) + '%',
                 fee: '0.3%',
                 route: path,
                 router: SILVERBACK_UNIFIED_ROUTER,
                 chain: 'Base',
+                aggregator: 'Direct Router',
                 timestamp: new Date().toISOString()
             }
         };
@@ -259,7 +315,7 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
         if (error.message.includes('INSUFFICIENT_LIQUIDITY')) {
             return {
                 success: false,
-                error: "No liquidity pool exists for this pair on Silverback DEX"
+                error: "No liquidity available for this pair"
             };
         }
         return {
@@ -293,40 +349,11 @@ export async function handlePoolAnalysis(input: PoolAnalysisInput): Promise<Pool
                 };
             }
         } else if (input.poolId) {
-            // Try to fetch from Keeta API
-            try {
-                const response = await fetch(`${DEX_API_URL}/anchor/pools/${input.poolId}`);
-                if (response.ok) {
-                    const pool = await response.json();
-                    return {
-                        success: true,
-                        data: {
-                            pairAddress: pool.pool_address,
-                            token0: {
-                                address: pool.token_a,
-                                symbol: pool.token_a_symbol || 'Unknown',
-                                reserve: pool.reserve_a
-                            },
-                            token1: {
-                                address: pool.token_b,
-                                symbol: pool.token_b_symbol || 'Unknown',
-                                reserve: pool.reserve_b
-                            },
-                            tvl: formatLargeNumber(Number(pool.reserve_a || 0) + Number(pool.reserve_b || 0)),
-                            liquidityRating: 'GOOD',
-                            fee: `${(pool.fee_bps || 30) / 100}%`,
-                            volume24h: pool.volume_24h || 'N/A',
-                            apy: pool.apy || 'N/A',
-                            utilization: 'N/A',
-                            healthScore: 85,
-                            chain: 'Keeta',
-                            timestamp: new Date().toISOString()
-                        }
-                    };
-                }
-            } catch {
-                // Fall through to Base chain lookup
-            }
+            // Pool ID lookup - requires tokenA and tokenB instead
+            return {
+                success: false,
+                error: "Please provide tokenA and tokenB addresses instead of poolId"
+            };
         }
 
         if (!tokenA || !tokenB) {
