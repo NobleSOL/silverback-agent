@@ -13,6 +13,7 @@
 
 import AcpPlugin, { AcpState } from "@virtuals-protocol/game-acp-plugin";
 import AcpClient, { AcpContractClient, baseAcpConfig } from "@virtuals-protocol/acp-node";
+import { processServiceRequest } from "./services";
 import dotenv from "dotenv";
 
 dotenv.config();
