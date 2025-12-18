@@ -279,40 +279,18 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
                     };
                 }
             }
-        } catch (ooError) {
-            // OpenOcean failed, fall back to direct router
-            console.log('OpenOcean quote failed, falling back to direct router:', ooError);
+        } catch (ooError: any) {
+            console.log('[SwapQuote] OpenOcean error:', ooError.message);
+            return {
+                success: false,
+                error: `OpenOcean quote failed: ${ooError.message}`
+            };
         }
 
-        // Fallback: Direct router query
-        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
-        const path = [tokenInAddress, tokenOutAddress];
-        const amounts = await router.getAmountsOut(amountInWei, path);
-
-        const amountOutWei = amounts[1];
-        const amountOutHuman = ethers.formatUnits(amountOutWei, decimalsOut);
-
-        // Calculate price impact estimate
-        const amountInNum = parseFloat(amountIn);
-        const amountOutNum = parseFloat(amountOutHuman);
-        const expectedOut = amountInNum * 0.997; // 0.3% fee assumption
-        const priceImpact = Math.abs(((expectedOut - amountOutNum) / expectedOut) * 100);
-
+        // If we get here, OpenOcean returned but had no data
         return {
-            success: true,
-            data: {
-                tokenIn: tokenInAddress,
-                tokenOut: tokenOutAddress,
-                amountIn,
-                amountOut: amountOutHuman,
-                priceImpact: priceImpact.toFixed(2) + '%',
-                fee: '0.3%',
-                route: path,
-                router: SILVERBACK_UNIFIED_ROUTER,
-                chain: 'Base',
-                aggregator: 'Direct Router',
-                timestamp: new Date().toISOString()
-            }
+            success: false,
+            error: "No quote available - OpenOcean returned no data for this pair"
         };
     } catch (e) {
         const error = e as Error;
