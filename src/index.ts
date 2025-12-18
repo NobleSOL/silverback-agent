@@ -123,7 +123,8 @@ async function main() {
                             }
 
                             if (sellerJobs.length > 0) {
-                                for (const job of sellerJobs) {
+                                for (const j of sellerJobs) {
+                                    const job = j as any;
                                     const jobId = job.id || job.jobId;
                                     const phase = job.phase;
                                     console.log(`   Job ${jobId}: phase=${phase}`);
