@@ -317,7 +317,7 @@ app.post('/api/v1/execute-swap', async (req: Request, res: Response) => {
 
 /**
  * DEX Metrics - $0.05
- * Overall DEX statistics from Base chain via OpenOcean and CoinGecko
+ * Overall DEX statistics from Base chain via OpenOcean
  */
 app.get('/api/v1/dex-metrics', async (_req: Request, res: Response) => {
     try {
@@ -325,65 +325,68 @@ app.get('/api/v1/dex-metrics', async (_req: Request, res: Response) => {
         const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
         const amountIn = '1000000000000000000'; // 1 WETH in wei
 
-        // Try CoinGecko first for price data
         let routingInfo = null;
-        const headers: Record<string, string> = { 'Accept': 'application/json' };
-        if (process.env.COINGECKO_API_KEY) {
-            headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
-        }
 
+        // Try OpenOcean first for real DEX routing data
         try {
-            const cgResponse = await fetch(
-                `${COINGECKO_API}/simple/token_price/base?` +
-                `contract_addresses=${weth},${usdc}&vs_currencies=usd`,
-                { headers }
+            // Use correct OpenOcean V4 API parameters
+            const quoteResponse = await fetch(
+                `https://open-api.openocean.finance/v4/base/quote?` +
+                `inTokenAddress=${weth}&outTokenAddress=${usdc}&` +
+                `amountDecimals=${amountIn}&gasPriceDecimals=1000000000&slippage=1`
             );
 
-            if (cgResponse.ok) {
-                const prices = await cgResponse.json();
-                const wethPrice = prices[weth.toLowerCase()]?.usd;
-                const usdcPrice = prices[usdc.toLowerCase()]?.usd;
+            console.log(`[DEX Metrics] OpenOcean response status: ${quoteResponse.status}`);
 
-                if (wethPrice && usdcPrice) {
-                    const estimatedOut = (wethPrice / usdcPrice).toFixed(2);
+            if (quoteResponse.ok) {
+                const quoteData = await quoteResponse.json();
+                if (quoteData.data && quoteData.data.outAmount) {
                     routingInfo = {
                         samplePair: 'WETH/USDC',
-                        estimatedOut: `${estimatedOut} USDC per WETH`,
-                        wethPriceUSD: `$${wethPrice.toFixed(2)}`,
-                        source: 'CoinGecko',
-                        priceImpact: '< 0.1% (estimate)'
+                        estimatedOut: (parseFloat(quoteData.data.outAmount) / 1e6).toFixed(2) + ' USDC',
+                        priceImpact: quoteData.data.estimatedPriceImpact || 'N/A',
+                        dexesUsed: quoteData.data.dexes?.length || 0,
+                        routesSplit: quoteData.data.path?.routes?.length || 1,
+                        source: 'OpenOcean'
                     };
                 }
             }
-        } catch (cgError) {
-            console.log('[DEX Metrics] CoinGecko error:', cgError);
+        } catch (ooError) {
+            console.log('[DEX Metrics] OpenOcean error:', ooError);
         }
 
-        // Fallback to OpenOcean if CoinGecko fails
+        // Fallback to CoinGecko if OpenOcean fails
         if (!routingInfo) {
+            const headers: Record<string, string> = { 'Accept': 'application/json' };
+            if (process.env.COINGECKO_API_KEY) {
+                headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
+            }
+
             try {
-                // Use correct OpenOcean V4 API parameters
-                const quoteResponse = await fetch(
-                    `https://open-api.openocean.finance/v4/base/quote?` +
-                    `inTokenAddress=${weth}&outTokenAddress=${usdc}&` +
-                    `amountDecimals=${amountIn}&gasPriceDecimals=1000000000&slippage=1`
+                const cgResponse = await fetch(
+                    `${COINGECKO_API}/simple/token_price/base?` +
+                    `contract_addresses=${weth},${usdc}&vs_currencies=usd`,
+                    { headers }
                 );
 
-                if (quoteResponse.ok) {
-                    const quoteData = await quoteResponse.json();
-                    if (quoteData.data && quoteData.data.outAmount) {
+                if (cgResponse.ok) {
+                    const prices = await cgResponse.json();
+                    const wethPrice = prices[weth.toLowerCase()]?.usd;
+                    const usdcPrice = prices[usdc.toLowerCase()]?.usd;
+
+                    if (wethPrice && usdcPrice) {
+                        const estimatedOut = (wethPrice / usdcPrice).toFixed(2);
                         routingInfo = {
                             samplePair: 'WETH/USDC',
-                            estimatedOut: (parseFloat(quoteData.data.outAmount) / 1e6).toFixed(2) + ' USDC',
-                            priceImpact: quoteData.data.estimatedPriceImpact || 'N/A',
-                            dexesUsed: quoteData.data.dexes?.length || 0,
-                            routesSplit: quoteData.data.path?.routes?.length || 1,
-                            source: 'OpenOcean'
+                            estimatedOut: `${estimatedOut} USDC per WETH`,
+                            wethPriceUSD: `$${wethPrice.toFixed(2)}`,
+                            source: 'CoinGecko (fallback)',
+                            priceImpact: '< 0.1% (estimate)'
                         };
                     }
                 }
-            } catch (ooError) {
-                console.log('[DEX Metrics] OpenOcean error:', ooError);
+            } catch (cgError) {
+                console.log('[DEX Metrics] CoinGecko error:', cgError);
             }
         }
 
@@ -392,16 +395,16 @@ app.get('/api/v1/dex-metrics', async (_req: Request, res: Response) => {
             data: {
                 network: 'Base',
                 chainId: 8453,
-                aggregators: ['CoinGecko', 'OpenOcean'],
+                aggregator: 'OpenOcean',
                 protocol: 'Silverback DEX',
                 router: '0x565cBf0F3eAdD873212Db91896e9a548f6D64894',
                 routing: routingInfo || { status: 'Unable to fetch quote data' },
                 capabilities: [
-                    'Price data via CoinGecko',
                     'Multi-DEX aggregation via OpenOcean',
                     'Best price routing across Uniswap, Sushiswap, Curve, etc.',
                     'Swap execution on Base chain',
-                    'Technical analysis & backtesting'
+                    'Technical analysis & backtesting',
+                    'CoinGecko price fallback'
                 ],
                 supportedTokens: {
                     WETH: weth,

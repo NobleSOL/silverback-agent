@@ -203,7 +203,7 @@ export interface ExecuteSwapOutput {
  * Service 1: Get Optimal Swap Route
  * Price: $0.02 USDC
  *
- * Uses CoinGecko for price data on Base chain tokens
+ * Uses OpenOcean aggregator for best prices across multiple DEXs on Base
  */
 export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteOutput> {
     try {
@@ -238,70 +238,12 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
         const decimalsOut = await tokenOutContract.decimals();
         const symbolOut = await tokenOutContract.symbol();
 
-        // Try CoinGecko first for price data
-        console.log(`[SwapQuote] Fetching prices from CoinGecko for ${amountIn} ${symbolIn} → ${symbolOut}`);
+        // Convert human amount to wei
+        const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
+
+        // Try OpenOcean aggregator first for best prices
+        console.log(`[SwapQuote] Fetching quote from OpenOcean for ${amountIn} ${symbolIn} → ${symbolOut}`);
         try {
-            const headers: Record<string, string> = { 'Accept': 'application/json' };
-            if (process.env.COINGECKO_API_KEY) {
-                headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
-            }
-
-            // Get prices from CoinGecko for Base chain tokens
-            const cgResponse = await fetch(
-                `${COINGECKO_API}/simple/token_price/base?` +
-                `contract_addresses=${tokenInAddress},${tokenOutAddress}&vs_currencies=usd`,
-                { headers }
-            );
-
-            console.log(`[SwapQuote] CoinGecko response status: ${cgResponse.status}`);
-
-            if (cgResponse.ok) {
-                const prices = await cgResponse.json();
-                console.log(`[SwapQuote] CoinGecko prices:`, JSON.stringify(prices));
-
-                const priceIn = prices[tokenInAddress.toLowerCase()]?.usd;
-                const priceOut = prices[tokenOutAddress.toLowerCase()]?.usd;
-
-                if (priceIn && priceOut) {
-                    const valueUSD = parseFloat(amountIn) * priceIn;
-                    // Apply estimated 0.3% fee
-                    const valueAfterFee = valueUSD * 0.997;
-                    const amountOut = (valueAfterFee / priceOut).toFixed(8);
-                    const rate = (priceIn / priceOut).toFixed(8);
-
-                    return {
-                        success: true,
-                        data: {
-                            tokenIn: tokenInAddress,
-                            tokenOut: tokenOutAddress,
-                            amountIn,
-                            amountOut,
-                            priceImpact: '< 0.1% (estimated)',
-                            fee: '0.3%',
-                            route: [symbolIn, symbolOut],
-                            router: SILVERBACK_UNIFIED_ROUTER,
-                            chain: 'Base',
-                            aggregator: 'CoinGecko',
-                            priceInUSD: `$${priceIn.toFixed(6)}`,
-                            priceOutUSD: `$${priceOut.toFixed(6)}`,
-                            rate: `1 ${symbolIn} = ${rate} ${symbolOut}`,
-                            valueUSD: `$${valueUSD.toFixed(2)}`,
-                            timestamp: new Date().toISOString()
-                        }
-                    };
-                } else {
-                    console.log(`[SwapQuote] CoinGecko missing price data - In: ${priceIn}, Out: ${priceOut}`);
-                }
-            }
-        } catch (cgError: any) {
-            console.log('[SwapQuote] CoinGecko error:', cgError.message);
-        }
-
-        // Fallback to OpenOcean if CoinGecko doesn't have the token
-        console.log('[SwapQuote] Trying OpenOcean as fallback...');
-        try {
-            const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
-
             // OpenOcean V4 API uses amountDecimals and gasPriceDecimals parameters
             const quoteUrl = `${OPENOCEAN_API}/quote?` +
                 `inTokenAddress=${tokenInAddress}&` +
@@ -346,6 +288,66 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             }
         } catch (ooError: any) {
             console.log('[SwapQuote] OpenOcean error:', ooError.message);
+        }
+
+        // Fallback to CoinGecko price estimation
+        console.log('[SwapQuote] Trying CoinGecko as fallback...');
+        try {
+            const headers: Record<string, string> = { 'Accept': 'application/json' };
+            if (process.env.COINGECKO_API_KEY) {
+                headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
+            }
+
+            // Get prices from CoinGecko for Base chain tokens
+            const cgResponse = await fetch(
+                `${COINGECKO_API}/simple/token_price/base?` +
+                `contract_addresses=${tokenInAddress},${tokenOutAddress}&vs_currencies=usd`,
+                { headers }
+            );
+
+            console.log(`[SwapQuote] CoinGecko response status: ${cgResponse.status}`);
+
+            if (cgResponse.ok) {
+                const prices = await cgResponse.json();
+                console.log(`[SwapQuote] CoinGecko prices:`, JSON.stringify(prices));
+
+                const priceIn = prices[tokenInAddress.toLowerCase()]?.usd;
+                const priceOut = prices[tokenOutAddress.toLowerCase()]?.usd;
+
+                if (priceIn && priceOut) {
+                    const valueUSD = parseFloat(amountIn) * priceIn;
+                    // Apply estimated 0.3% fee
+                    const valueAfterFee = valueUSD * 0.997;
+                    const amountOut = (valueAfterFee / priceOut).toFixed(8);
+                    const rate = (priceIn / priceOut).toFixed(8);
+
+                    return {
+                        success: true,
+                        data: {
+                            tokenIn: tokenInAddress,
+                            tokenOut: tokenOutAddress,
+                            amountIn,
+                            amountOut,
+                            priceImpact: '< 0.1% (estimated)',
+                            fee: '~0.3%',
+                            route: [symbolIn, symbolOut],
+                            router: SILVERBACK_UNIFIED_ROUTER,
+                            chain: 'Base',
+                            aggregator: 'CoinGecko (price estimate)',
+                            priceInUSD: `$${priceIn.toFixed(6)}`,
+                            priceOutUSD: `$${priceOut.toFixed(6)}`,
+                            rate: `1 ${symbolIn} = ${rate} ${symbolOut}`,
+                            valueUSD: `$${valueUSD.toFixed(2)}`,
+                            note: 'Price estimate - actual swap may vary',
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+                } else {
+                    console.log(`[SwapQuote] CoinGecko missing price data - In: ${priceIn}, Out: ${priceOut}`);
+                }
+            }
+        } catch (cgError: any) {
+            console.log('[SwapQuote] CoinGecko error:', cgError.message);
         }
 
         // Fallback to on-chain quote from Silverback router
