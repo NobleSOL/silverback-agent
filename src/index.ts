@@ -100,6 +100,7 @@ async function main() {
                     try {
                         const acpPlugin = getAcpPlugin();
                         if (acpPlugin) {
+                            console.log(`🔍 Polling ACP for jobs...`);
                             const acpState = await acpPlugin.getAcpState();
                             // Log ACP state for debugging
                             const sellerJobs = acpState.jobs?.active?.asASeller || [];
