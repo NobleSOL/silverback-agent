@@ -98,21 +98,51 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
             acpContractClient,
             // Called when a new job is assigned to this agent
             onNewTask: async (job: any) => {
-                console.log(`\n📥 [ACP WebSocket] New job received!`);
-                console.log(`   Job ID: ${job.id || job.jobId}`);
-                console.log(`   Phase: ${job.phase}`);
-                console.log(`   Service: ${JSON.stringify(job.serviceRequirement || job.requirement)?.substring(0, 100)}`);
+                const jobId = job.id || job.jobId;
+                const phase = job.phase;
+                const memoId = job.memo?.[job.memo?.length - 1]?.id;
 
-                // Process the job
+                console.log(`\n📥 [ACP WebSocket] Job event!`);
+                console.log(`   Job ID: ${jobId}, Phase: ${phase}, MemoId: ${memoId}`);
+
                 try {
-                    const serviceReq = typeof job.serviceRequirement === 'string'
-                        ? job.serviceRequirement
-                        : JSON.stringify(job.serviceRequirement || job.requirement || {});
+                    // Get service details
+                    const desc = job.desc || {};
+                    const serviceName = desc.name || 'unknown';
+                    const requirement = desc.requirement || job.serviceRequirement || job.requirement || {};
 
-                    const result = await processServiceRequest(serviceReq, serviceReq);
-                    console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 100)}`);
-                } catch (err) {
-                    console.error(`   ❌ Processing error:`, err);
+                    console.log(`   Service: ${serviceName}`);
+                    console.log(`   Requirement: ${JSON.stringify(requirement).substring(0, 100)}`);
+
+                    // Phase 0 (REQUEST) - Accept the job
+                    if (phase === 0 || phase === 'request') {
+                        console.log(`   🔄 Phase 0: Accepting job...`);
+                        if (acpClient && memoId) {
+                            await (acpClient as any).respondJob(jobId, memoId, true, "Job accepted by Silverback");
+                            console.log(`   ✅ Job accepted`);
+                        } else {
+                            console.log(`   ⚠️ Cannot respond - acpClient: ${!!acpClient}, memoId: ${memoId}`);
+                        }
+                    }
+                    // Phase 2 (TRANSACTION) - Deliver the service
+                    else if (phase === 2 || phase === 'transaction') {
+                        console.log(`   🔄 Phase 2: Processing and delivering...`);
+
+                        // Process the service request
+                        const result = await processServiceRequest(serviceName, JSON.stringify(requirement));
+                        console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
+
+                        // Deliver the result
+                        if (acpClient) {
+                            await (acpClient as any).deliverJob(jobId, result.deliverable);
+                            console.log(`   ✅ Deliverable submitted`);
+                        }
+                    }
+                    else {
+                        console.log(`   ℹ️ Phase ${phase} - no action needed from provider`);
+                    }
+                } catch (err: any) {
+                    console.error(`   ❌ Error handling job:`, err.message);
                 }
             },
             // Called when we need to evaluate a job (as buyer)
