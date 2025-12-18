@@ -1,4 +1,4 @@
-import { GameAgent, LLMModel } from "@virtuals-protocol/game";
+import { GameAgent, GameWorker, LLMModel } from "@virtuals-protocol/game";
 import { twitterWorker } from "./workers/twitter-worker";
 import { learningWorker } from "./workers/learning-worker";
 import { telegramSignalsWorker, isTelegramWorkerEnabled } from "./workers/telegram-signals-worker";
@@ -7,7 +7,7 @@ import { paperTradingWorker } from "./workers/paper-trading-worker";
 // import { tradingWorker } from "./workers/trading-worker";
 import { SILVERBACK_KNOWLEDGE } from "./knowledge";
 import { stateManager } from "./state/state-manager";
-import { getAcpPlugin, getAcpState, getAcpAgentDescription, isAcpConfigured } from "./acp";
+import { getAcpState } from "./acp";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -66,9 +66,30 @@ if (!process.env.API_KEY) {
     throw new Error('API_KEY is required in environment variables');
 }
 
-export const silverback_agent = new GameAgent(process.env.API_KEY, {
-    name: "Silverback",
-    goal: `=== YOUR THREE INDEPENDENT ACTIVITIES ===
+// Store agent instance
+let silverback_agent: GameAgent | null = null;
+
+/**
+ * Create the Silverback agent with optional ACP worker
+ * Must be called after ACP is initialized if using ACP
+ */
+export function createSilverbackAgent(acpWorker?: GameWorker): GameAgent {
+    if (silverback_agent) {
+        return silverback_agent;
+    }
+
+    // Build workers array with ACP worker if provided
+    const workers: GameWorker[] = [
+        twitterWorker,
+        paperTradingWorker,
+        learningWorker,
+        ...(isTelegramWorkerEnabled() ? [telegramSignalsWorker] : []),
+        ...(acpWorker ? [acpWorker] : [])
+    ];
+
+    silverback_agent = new GameAgent(process.env.API_KEY!, {
+        name: "Silverback",
+        goal: `=== YOUR THREE INDEPENDENT ACTIVITIES ===
 
 You have THREE separate jobs. Rotate between them each step:
 
@@ -455,48 +476,26 @@ Always use functions to verify data before making claims. Real numbers from real
 
 Your mission is to prove that AI agents can be trusted sources of market intelligence and community protection—not through hype or promises, but through consistent analysis, transparent infrastructure operation, and genuine value delivery to the ecosystem. You demonstrate competence through what you've built (Silverback DEX) and what you observe (market intelligence), creating a foundation of trust that compounds over time.`,
     
-    // Twitter for community building + Paper Trading for learning + Learning analysis + Telegram signals (if configured)
-    workers: [
-        twitterWorker,
-        paperTradingWorker,  // Simulates trades to learn strategies
-        learningWorker,      // Analyzes performance and generates insights
-        ...(isTelegramWorkerEnabled() ? [telegramSignalsWorker] : [])
-    ],
-    // Use smaller model to reduce API costs (70B instead of 405B)
-    llmModel: LLMModel.Llama_3_3_70B_Instruct,
-    getAgentState: getAgentState
-});
+        // Workers are passed in from createSilverbackAgent
+        workers: workers,
+        // Use smaller model to reduce API costs (70B instead of 405B)
+        llmModel: LLMModel.Llama_3_3_70B_Instruct,
+        getAgentState: getAgentState
+    });
 
-silverback_agent.setLogger((agent: GameAgent, msg: string) => {
-    console.log(`🦍 [${agent.name}]`);
-    console.log(msg);
-    console.log("------------------------\n");
-});
+    silverback_agent.setLogger((agent: GameAgent, msg: string) => {
+        console.log(`🦍 [${agent.name}]`);
+        console.log(msg);
+        console.log("------------------------\n");
+    });
+
+    console.log(`✅ Agent created with ${workers.length} workers${acpWorker ? ' (including ACP)' : ''}`);
+    return silverback_agent;
+}
 
 /**
- * Add ACP worker to the agent dynamically
- * Called after ACP is initialized in index.ts
+ * Get the agent instance (must call createSilverbackAgent first)
  */
-export function addAcpWorker() {
-    const acpPlugin = getAcpPlugin();
-    if (acpPlugin) {
-        const acpWorker = acpPlugin.getWorker({
-            getEnvironment: async () => ({
-                silverback_services: [
-                    { name: "Swap Quote", price: "$0.02 USDC", description: "Get optimal swap route with price impact" },
-                    { name: "Pool Analysis", price: "$0.10 USDC", description: "Comprehensive liquidity pool analysis" },
-                    { name: "Technical Analysis", price: "$0.25 USDC", description: "Full TA with indicators and patterns" },
-                    { name: "Execute Swap", price: "0.1% (min $0.50)", description: "Execute swap on Silverback DEX (Phase 2)" }
-                ],
-                chains_supported: ["Base", "Keeta"],
-                dex_url: "https://silverbackdefi.app"
-            })
-        });
-
-        // Add the ACP worker to the agent's workers
-        // Note: GAME SDK doesn't have a direct addWorker method, so we need to do this before init
-        console.log("📦 ACP worker configured and ready");
-        return acpWorker;
-    }
-    return null;
+export function getSilverbackAgent(): GameAgent | null {
+    return silverback_agent;
 }
