@@ -281,16 +281,54 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             }
         } catch (ooError: any) {
             console.log('[SwapQuote] OpenOcean error:', ooError.message);
-            return {
-                success: false,
-                error: `OpenOcean quote failed: ${ooError.message}`
-            };
         }
 
-        // If we get here, OpenOcean returned but had no data
+        // Fallback to 1inch API
+        console.log('[SwapQuote] Trying 1inch API...');
+        try {
+            const oneInchUrl = `https://api.1inch.dev/swap/v6.0/8453/quote?` +
+                `src=${tokenInAddress}&dst=${tokenOutAddress}&amount=${amountInWei.toString()}`;
+
+            const oneInchResponse = await fetch(oneInchUrl, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.ONEINCH_API_KEY || ''}`,
+                    'Accept': 'application/json'
+                }
+            });
+
+            console.log(`[SwapQuote] 1inch response status: ${oneInchResponse.status}`);
+
+            if (oneInchResponse.ok) {
+                const data = await oneInchResponse.json();
+                if (data.dstAmount) {
+                    const amountOutHuman = ethers.formatUnits(data.dstAmount, decimalsOut);
+                    return {
+                        success: true,
+                        data: {
+                            tokenIn: tokenInAddress,
+                            tokenOut: tokenOutAddress,
+                            amountIn,
+                            amountOut: amountOutHuman,
+                            priceImpact: 'N/A',
+                            fee: 'Variable',
+                            route: [symbolIn, symbolOut],
+                            router: SILVERBACK_UNIFIED_ROUTER,
+                            chain: 'Base',
+                            aggregator: '1inch',
+                            estimatedGas: data.gas || 'N/A',
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+                }
+            }
+        } catch (oneInchError: any) {
+            console.log('[SwapQuote] 1inch error:', oneInchError.message);
+        }
+
+        // If both fail, return error
         return {
             success: false,
-            error: "No quote available - OpenOcean returned no data for this pair"
+            error: "No quote available - both OpenOcean (403) and 1inch failed"
         };
     } catch (e) {
         const error = e as Error;
