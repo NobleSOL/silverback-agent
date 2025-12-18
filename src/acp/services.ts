@@ -325,10 +325,51 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             console.log('[SwapQuote] 1inch error:', oneInchError.message);
         }
 
-        // If both fail, return error
+        // Fallback to CoinGecko price estimation
+        console.log('[SwapQuote] Trying CoinGecko price estimation...');
+        try {
+            // Get prices from CoinGecko
+            const cgResponse = await fetch(
+                `https://api.coingecko.com/api/v3/simple/token_price/base?` +
+                `contract_addresses=${tokenInAddress},${tokenOutAddress}&vs_currencies=usd`
+            );
+
+            if (cgResponse.ok) {
+                const prices = await cgResponse.json();
+                const priceIn = prices[tokenInAddress.toLowerCase()]?.usd;
+                const priceOut = prices[tokenOutAddress.toLowerCase()]?.usd;
+
+                if (priceIn && priceOut) {
+                    const valueUSD = parseFloat(amountIn) * priceIn;
+                    const amountOut = (valueUSD / priceOut).toFixed(8);
+
+                    return {
+                        success: true,
+                        data: {
+                            tokenIn: tokenInAddress,
+                            tokenOut: tokenOutAddress,
+                            amountIn,
+                            amountOut,
+                            priceImpact: 'N/A (estimate)',
+                            fee: '~0.3%',
+                            route: [symbolIn, symbolOut],
+                            router: SILVERBACK_UNIFIED_ROUTER,
+                            chain: 'Base',
+                            aggregator: 'CoinGecko (price estimate)',
+                            note: 'This is a price estimate, not a live quote. Actual swap may vary.',
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+                }
+            }
+        } catch (cgError: any) {
+            console.log('[SwapQuote] CoinGecko error:', cgError.message);
+        }
+
+        // If all fail, return error
         return {
             success: false,
-            error: "No quote available - both OpenOcean (403) and 1inch failed"
+            error: "No quote available - OpenOcean (403), 1inch, and CoinGecko all failed"
         };
     } catch (e) {
         const error = e as Error;
