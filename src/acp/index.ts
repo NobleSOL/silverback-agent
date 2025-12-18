@@ -92,14 +92,47 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
             baseAcpConfig // Base mainnet
         );
 
-        // Create ACP client with evaluation handler
+        // Create ACP client with job handlers
         const acpClient = new AcpClient({
             acpContractClient,
+            // Handler for new incoming job requests
+            onNewTask: async (job: AcpJob) => {
+                console.log(`\n📥 New ACP job received: ${job.id}`);
+                console.log(`   Service: ${job.serviceRequirement?.substring(0, 100)}...`);
+                console.log(`   From: ${job.clientEntityId}`);
+                console.log(`   Price: ${job.price} USDC`);
+
+                try {
+                    // Auto-accept jobs - we're a service provider
+                    console.log(`   ✅ Accepting job ${job.id}...`);
+                    await job.respond(true);
+                    console.log(`   ✅ Job accepted, processing...`);
+
+                    // Process the service request
+                    const result = await processServiceRequest(
+                        job.serviceRequirement || '',
+                        job.serviceRequirement || ''
+                    );
+
+                    // Submit the deliverable
+                    console.log(`   📤 Submitting deliverable for job ${job.id}...`);
+                    await job.submit(result.deliverable);
+                    console.log(`   ✅ Deliverable submitted for job ${job.id}`);
+
+                } catch (error) {
+                    console.error(`   ❌ Failed to process job ${job.id}:`, error);
+                    try {
+                        // Try to reject if we failed to process
+                        await job.respond(false);
+                    } catch {
+                        // Ignore rejection errors
+                    }
+                }
+            },
+            // Handler for evaluation phase (when we're the buyer)
             onEvaluate: async (job: AcpJob) => {
-                // Evaluation handler - verify deliverables meet requirements
-                console.log(`📋 Evaluating job ${job.id}...`);
+                console.log(`\n📋 Evaluating job ${job.id}...`);
                 console.log(`   Deliverable: ${job.deliverable?.substring(0, 100)}...`);
-                console.log(`   Requirements: ${job.serviceRequirement?.substring(0, 100)}...`);
 
                 try {
                     // Parse the deliverable to check if it was successful
