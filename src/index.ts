@@ -103,19 +103,12 @@ async function main() {
                             console.log(`🔍 Polling ACP for jobs...`);
                             const acpState = await acpPlugin.getAcpState();
 
-                            // Debug: log full state structure
-                            console.log(`   ACP state keys:`, Object.keys(acpState));
-                            if (acpState.jobs) {
-                                console.log(`   jobs keys:`, Object.keys(acpState.jobs));
-                                if (acpState.jobs.active) {
-                                    console.log(`   active keys:`, Object.keys(acpState.jobs.active));
-                                }
-                            }
-
                             // Log ACP state for debugging
                             const sellerJobs = acpState.jobs?.active?.asASeller || [];
                             const buyerJobs = acpState.jobs?.active?.asABuyer || [];
-                            console.log(`   Found: ${sellerJobs.length} seller, ${buyerJobs.length} buyer jobs`);
+                            const completedJobs = acpState.jobs?.completed || [];
+                            const cancelledJobs = acpState.jobs?.cancelled || [];
+                            console.log(`   Active: ${sellerJobs.length} seller, ${buyerJobs.length} buyer | Completed: ${completedJobs.length} | Cancelled: ${cancelledJobs.length}`);
 
                             if (sellerJobs.length > 0) {
                                 console.log(`   Seller jobs:`, sellerJobs.map((j: any) => ({ id: j.id, phase: j.phase, service: j.serviceRequirement?.substring(0, 50) })));

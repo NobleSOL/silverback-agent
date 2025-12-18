@@ -28,6 +28,7 @@ const ACP_ENTITY_ID = process.env.ACP_ENTITY_ID;
 const ACP_CLUSTER = process.env.ACP_CLUSTER || 'defi'; // DeFi cluster for AHF integration
 
 let acpPlugin: AcpPlugin | null = null;
+let acpClient: AcpClient | null = null;
 let acpInitialized = false;
 
 /**
@@ -93,7 +94,7 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         );
 
         // Create ACP client with WebSocket callbacks for job notifications
-        const acpClient = new AcpClient({
+        acpClient = new AcpClient({
             acpContractClient,
             // Called when a new job is assigned to this agent
             onNewTask: async (job: any) => {
@@ -149,6 +150,13 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
  */
 export function getAcpPlugin(): AcpPlugin | null {
     return acpPlugin;
+}
+
+/**
+ * Get the ACP client instance for direct API calls
+ */
+export function getAcpClient(): AcpClient | null {
+    return acpClient;
 }
 
 /**
