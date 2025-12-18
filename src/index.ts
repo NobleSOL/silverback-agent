@@ -101,14 +101,19 @@ async function main() {
                         const acpPlugin = getAcpPlugin();
                         if (acpPlugin) {
                             const acpState = await acpPlugin.getAcpState();
-                            // Check for active jobs where we're the seller
-                            hasAcpJobs = (acpState.jobs?.active?.asASeller?.length || 0) > 0;
-                            if (hasAcpJobs) {
-                                console.log(`\n🔗 ACP: ${acpState.jobs.active.asASeller.length} pending job(s) detected!`);
+                            // Log ACP state for debugging
+                            const sellerJobs = acpState.jobs?.active?.asASeller || [];
+                            const buyerJobs = acpState.jobs?.active?.asABuyer || [];
+                            if (sellerJobs.length > 0 || buyerJobs.length > 0) {
+                                console.log(`\n🔗 ACP State: ${sellerJobs.length} seller job(s), ${buyerJobs.length} buyer job(s)`);
+                                if (sellerJobs.length > 0) {
+                                    console.log(`   Seller jobs:`, sellerJobs.map((j: any) => ({ id: j.id, phase: j.phase, service: j.serviceRequirement?.substring(0, 50) })));
+                                }
                             }
+                            hasAcpJobs = sellerJobs.length > 0;
                         }
-                    } catch {
-                        // Ignore ACP state errors
+                    } catch (acpErr) {
+                        console.log(`⚠️ ACP state check error:`, acpErr);
                     }
                 }
 
