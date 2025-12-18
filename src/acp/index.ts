@@ -107,13 +107,26 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                 console.log(`   Job methods:`, Object.keys(job).filter(k => typeof job[k] === 'function'));
 
                 try {
-                    // Get service details
+                    // Get service details - handle various nested structures
                     const desc = job.desc || {};
-                    const serviceName = desc.name || 'unknown';
-                    const requirement = desc.requirement || job.serviceRequirement || job.requirement || {};
+                    const jobRequirement = desc.requirement || job.serviceRequirement || job.requirement || {};
+
+                    // Service name can be in desc.name or inside the requirement object
+                    let serviceName = desc.name || jobRequirement.name || 'unknown';
+                    // The actual parameters are in requirement.requirement or just requirement
+                    let serviceParams = jobRequirement.requirement || jobRequirement;
+
+                    // If serviceName is still unknown, try to infer from params
+                    if (serviceName === 'unknown' && serviceParams.tokenIn && serviceParams.tokenOut) {
+                        serviceName = 'getSwapQuote';
+                    } else if (serviceName === 'unknown' && serviceParams.tokenA && serviceParams.tokenB) {
+                        serviceName = 'getPoolAnalysis';
+                    } else if (serviceName === 'unknown' && serviceParams.token) {
+                        serviceName = 'getTechnicalAnalysis';
+                    }
 
                     console.log(`   Service: ${serviceName}`);
-                    console.log(`   Requirement: ${JSON.stringify(requirement).substring(0, 100)}`);
+                    console.log(`   Params: ${JSON.stringify(serviceParams).substring(0, 200)}`);
 
                     // Phase 0 (REQUEST) - Accept the job
                     if (phase === 0 || phase === 'request') {
@@ -133,7 +146,7 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                         console.log(`   🔄 Phase 2: Processing and delivering...`);
 
                         // Process the service request
-                        const result = await processServiceRequest(serviceName, JSON.stringify(requirement));
+                        const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
                         console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
 
                         // Deliver the result

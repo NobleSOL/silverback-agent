@@ -133,17 +133,26 @@ async function main() {
                                     if (phase === 'request') {
                                         console.log(`   🔄 Attempting to accept job ${jobId}...`);
                                         try {
-                                            // Get the job's service requirement
+                                            // Get the job's service requirement - handle various nested structures
                                             const desc = job.desc || {};
-                                            const requirement = desc.requirement || {};
-                                            const serviceName = desc.name || 'unknown';
+                                            const jobRequirement = desc.requirement || job.serviceRequirement || job.requirement || {};
+
+                                            // Service name can be in desc.name or inside the requirement object
+                                            let serviceName = desc.name || jobRequirement.name || 'unknown';
+                                            // The actual parameters are in requirement.requirement or just requirement
+                                            let serviceParams = jobRequirement.requirement || jobRequirement;
+
+                                            // If serviceName is still unknown, try to infer from params
+                                            if (serviceName === 'unknown' && serviceParams.tokenIn && serviceParams.tokenOut) {
+                                                serviceName = 'getSwapQuote';
+                                            }
 
                                             console.log(`   Service: ${serviceName}`);
-                                            console.log(`   Requirement:`, JSON.stringify(requirement));
+                                            console.log(`   Params:`, JSON.stringify(serviceParams).substring(0, 200));
 
                                             // Process the service
                                             const { processServiceRequest } = await import('./acp/services');
-                                            const result = await processServiceRequest(serviceName, JSON.stringify(requirement));
+                                            const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
 
                                             console.log(`   ✅ Service processed:`, result.deliverable?.substring(0, 200));
 
