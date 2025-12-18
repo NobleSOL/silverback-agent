@@ -81,19 +81,54 @@ async function main() {
             console.log("")
         }
 
+        // ACP polling interval - check for jobs every 30 seconds when ACP is enabled
+        const ACP_POLL_INTERVAL_MS = 30000;
+
         // Run the agent with rate limiting and retry logic
         let consecutiveErrors = 0;
         let stepCount = 0;
+        let lastFullStep = Date.now();
+
         while (true) {
             try {
-                stepCount++;
-                console.log(`\n📍 Step ${stepCount} starting...`);
-                await silverback_agent.step({ verbose: true });
-                consecutiveErrors = 0; // Reset on success
+                const now = Date.now();
+                const timeSinceLastStep = now - lastFullStep;
 
-                // Rate limiting: wait between successful steps
-                console.log(`⏳ Waiting ${STEP_INTERVAL_MS/1000}s before next step...`);
-                await new Promise(r => setTimeout(r, STEP_INTERVAL_MS));
+                // Check if ACP has pending jobs - if so, run a quick step
+                let hasAcpJobs = false;
+                if (acpWorker) {
+                    try {
+                        const acpPlugin = getAcpPlugin();
+                        if (acpPlugin) {
+                            const acpState = await acpPlugin.getAcpState();
+                            // Check for active jobs where we're the seller
+                            hasAcpJobs = (acpState.jobs?.active?.asASeller?.length || 0) > 0;
+                            if (hasAcpJobs) {
+                                console.log(`\n🔗 ACP: ${acpState.jobs.active.asASeller.length} pending job(s) detected!`);
+                            }
+                        }
+                    } catch {
+                        // Ignore ACP state errors
+                    }
+                }
+
+                // Run step if: time for scheduled step OR we have ACP jobs waiting
+                if (timeSinceLastStep >= STEP_INTERVAL_MS || hasAcpJobs) {
+                    stepCount++;
+                    console.log(`\n📍 Step ${stepCount} starting...${hasAcpJobs ? ' (ACP job trigger)' : ''}`);
+                    await silverback_agent.step({ verbose: true });
+                    consecutiveErrors = 0;
+                    lastFullStep = Date.now();
+
+                    // Normal wait after step
+                    if (!hasAcpJobs) {
+                        console.log(`⏳ Waiting ${STEP_INTERVAL_MS/1000}s before next step...`);
+                    }
+                }
+
+                // Wait before next check - shorter if ACP is active
+                const waitTime = acpWorker ? ACP_POLL_INTERVAL_MS : STEP_INTERVAL_MS;
+                await new Promise(r => setTimeout(r, hasAcpJobs ? 5000 : waitTime));
             } catch (stepError: any) {
                 consecutiveErrors++;
                 const isRateLimit = stepError.message?.includes('Too Many Requests') || stepError.message?.includes('429');
