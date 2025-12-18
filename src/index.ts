@@ -1,6 +1,7 @@
-import { silverback_agent, addAcpWorker } from './agent';
+import { createSilverbackAgent } from './agent';
 import { stateManager } from './state/state-manager';
-import { initializeAcp, isAcpConfigured } from './acp';
+import { initializeAcp, isAcpConfigured, getAcpPlugin } from './acp';
+import { GameWorker } from '@virtuals-protocol/game';
 
 // Rate limiting configuration - IMPORTANT: Keep this high to avoid tweet spam
 const STEP_INTERVAL_MS = parseInt(process.env.STEP_INTERVAL_MS || '300000'); // Default: 5 minutes between steps
@@ -19,15 +20,34 @@ async function main() {
         console.log(`   Win Rate: ${(state.metrics.winRate * 100).toFixed(1)}%`);
         console.log(`   Total PnL: $${state.metrics.totalPnL.toFixed(2)}\n`);
 
-        // Initialize ACP if configured
+        // Initialize ACP if configured and get worker
+        let acpWorker: GameWorker | undefined;
         if (isAcpConfigured()) {
             console.log("🔗 ACP credentials detected, initializing...");
-            await initializeAcp();
-            addAcpWorker();
+            const acpPlugin = await initializeAcp();
+            if (acpPlugin) {
+                acpWorker = acpPlugin.getWorker({
+                    getEnvironment: async () => ({
+                        silverback_services: [
+                            { name: "getSwapQuote", price: "$0.02 USDC", description: "Get optimal swap route with price impact" },
+                            { name: "getPoolAnalysis", price: "$0.10 USDC", description: "Comprehensive liquidity pool analysis" },
+                            { name: "getTechnicalAnalysis", price: "$0.25 USDC", description: "Full TA with indicators and patterns" },
+                            { name: "executeSwap", price: "$0.50 USDC", description: "Execute swap on Silverback DEX" }
+                        ],
+                        chains_supported: ["Base", "Keeta"],
+                        dex_url: "https://silverbackdefi.app",
+                        router: "0x565cBf0F3eAdD873212Db91896e9a548f6D64894"
+                    })
+                });
+                console.log("📦 ACP worker created successfully");
+            }
         } else {
             console.log("ℹ️  ACP not configured - skipping ACP integration");
             console.log("   To enable: Set ACP_AGENT_WALLET_ADDRESS, ACP_PRIVATE_KEY, ACP_ENTITY_ID\n");
         }
+
+        // Create the agent with ACP worker if available
+        const silverback_agent = createSilverbackAgent(acpWorker);
 
         // Initialize the agent with retry for rate limits
         let initRetries = 0;
@@ -49,7 +69,7 @@ async function main() {
 
         console.log("✅ Silverback initialized successfully!");
         console.log(`🔄 Running with ${STEP_INTERVAL_MS/1000}s interval between steps...`);
-        if (isAcpConfigured()) {
+        if (acpWorker) {
             console.log("🔗 ACP Provider mode: ACTIVE - Ready to accept jobs\n");
         } else {
             console.log("")
