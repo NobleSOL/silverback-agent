@@ -296,19 +296,79 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
         // Fallback to CoinGecko price estimation
         console.log('[SwapQuote] Trying CoinGecko as fallback...');
         try {
+            // Use well-known coin IDs for common tokens to avoid contract lookup issues
+            const coinIdMap: Record<string, string> = {
+                '0x4200000000000000000000000000000000000006': 'weth', // WETH on Base
+                '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'usd-coin', // USDC on Base
+                '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': 'bridged-usd-coin-base', // USDbC
+                '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'dai', // DAI
+            };
+
+            const coinIdIn = coinIdMap[tokenInAddress.toLowerCase()];
+            const coinIdOut = coinIdMap[tokenOutAddress.toLowerCase()];
+
+            if (coinIdIn && coinIdOut) {
+                // Use simple/price endpoint with coin IDs (more reliable)
+                const cgUrl = `${COINGECKO_API}/simple/price?ids=${coinIdIn},${coinIdOut}&vs_currencies=usd`;
+                console.log(`[SwapQuote] CoinGecko URL: ${cgUrl}`);
+
+                const cgResponse = await fetch(cgUrl, {
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                console.log(`[SwapQuote] CoinGecko response status: ${cgResponse.status}`);
+
+                if (cgResponse.ok) {
+                    const prices = await cgResponse.json();
+                    console.log(`[SwapQuote] CoinGecko prices:`, JSON.stringify(prices));
+
+                    const priceIn = prices[coinIdIn]?.usd;
+                    const priceOut = prices[coinIdOut]?.usd;
+
+                    if (priceIn && priceOut) {
+                        const valueUSD = parseFloat(amountIn) * priceIn;
+                        const valueAfterFee = valueUSD * 0.997;
+                        const amountOut = (valueAfterFee / priceOut).toFixed(8);
+                        const rate = (priceIn / priceOut).toFixed(8);
+
+                        return {
+                            success: true,
+                            data: {
+                                tokenIn: tokenInAddress,
+                                tokenOut: tokenOutAddress,
+                                amountIn,
+                                amountOut,
+                                priceImpact: '< 0.1% (estimated)',
+                                fee: '~0.3%',
+                                route: [symbolIn, symbolOut],
+                                router: SILVERBACK_UNIFIED_ROUTER,
+                                chain: 'Base',
+                                aggregator: 'CoinGecko',
+                                priceInUSD: `$${priceIn.toFixed(2)}`,
+                                priceOutUSD: `$${priceOut.toFixed(6)}`,
+                                rate: `1 ${symbolIn} = ${rate} ${symbolOut}`,
+                                valueUSD: `$${valueUSD.toFixed(2)}`,
+                                note: 'Price estimate based on market rates',
+                                timestamp: new Date().toISOString()
+                            }
+                        };
+                    }
+                }
+            }
+
+            // Fallback to contract address lookup if coin IDs not mapped
             const headers: Record<string, string> = { 'Accept': 'application/json' };
             if (process.env.COINGECKO_API_KEY) {
                 headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
             }
 
-            // Get prices from CoinGecko for Base chain tokens
             const cgResponse = await fetch(
                 `${COINGECKO_API}/simple/token_price/base?` +
                 `contract_addresses=${tokenInAddress},${tokenOutAddress}&vs_currencies=usd`,
                 { headers }
             );
 
-            console.log(`[SwapQuote] CoinGecko response status: ${cgResponse.status}`);
+            console.log(`[SwapQuote] CoinGecko token_price response status: ${cgResponse.status}`);
 
             if (cgResponse.ok) {
                 const prices = await cgResponse.json();
