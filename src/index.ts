@@ -110,6 +110,18 @@ async function main() {
                             const cancelledJobs = acpState.jobs?.cancelled || [];
                             console.log(`   Active: ${sellerJobs.length} seller, ${buyerJobs.length} buyer | Completed: ${completedJobs.length} | Cancelled: ${cancelledJobs.length}`);
 
+                            // Try direct API fetch for active jobs
+                            const { getAcpClient } = await import('./acp');
+                            const client = getAcpClient();
+                            if (client && (client as any).getActiveJobs) {
+                                try {
+                                    const activeJobs = await (client as any).getActiveJobs(1, 10);
+                                    console.log(`   Direct API: ${activeJobs?.length || 0} active jobs`, activeJobs?.map((j: any) => j.id || j.jobId));
+                                } catch (e: any) {
+                                    console.log(`   Direct API error: ${e.message}`);
+                                }
+                            }
+
                             if (sellerJobs.length > 0) {
                                 console.log(`   Seller jobs:`, sellerJobs.map((j: any) => ({ id: j.id, phase: j.phase, service: j.serviceRequirement?.substring(0, 50) })));
                             }
