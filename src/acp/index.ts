@@ -160,12 +160,18 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                         const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
                         console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
 
+                        // Format deliverable per IDeliverable interface: { type: string, value: string | object }
+                        const deliverablePayload = {
+                            type: serviceName,
+                            value: result.deliverable // JSON string of the result
+                        };
+
                         // Deliver the result
                         if (typeof job.deliver === 'function') {
-                            await job.deliver(result.deliverable);
+                            await job.deliver(deliverablePayload);
                             console.log(`   ✅ Deliverable submitted via job.deliver()`);
                         } else if (acpClient) {
-                            await (acpClient as any).deliverJob(jobId, result.deliverable);
+                            await (acpClient as any).deliverJob(jobId, deliverablePayload);
                             console.log(`   ✅ Deliverable submitted via acpClient.deliverJob()`);
                         }
                     }
