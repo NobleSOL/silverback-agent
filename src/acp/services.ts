@@ -1674,11 +1674,11 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
                             const amountOutHuman = ethers.formatUnits(cdpData.toAmount, decimalsOut);
                             const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
 
-                            // DO NOT transfer manually - ACP's deliverPayable() handles the transfer
-                            // The swapped tokens stay in our wallet, and ACP will transfer them
-                            // when we call job.deliverPayable() in index.ts
+                            // Swap complete - tokens are now in our EOA wallet
+                            // The transfer to buyer is handled in index.ts handleTransactionPhase
+                            // which manually transfers then calls job.deliver()
                             console.log(`[ExecuteSwapWithFunds] Swap complete. Output: ${amountOutHuman} ${symbolOut}`);
-                            console.log(`[ExecuteSwapWithFunds] Tokens held for ACP deliverPayable() transfer to ${recipientAddress}`);
+                            console.log(`[ExecuteSwapWithFunds] Tokens held in EOA for manual transfer to ${recipientAddress}`);
 
                             return {
                                 success: true,
