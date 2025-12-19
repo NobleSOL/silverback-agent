@@ -73,10 +73,13 @@ const COINGECKO_API = process.env.COINGECKO_API_KEY
     ? "https://pro-api.coingecko.com/api/v3"
     : "https://api.coingecko.com/api/v3";
 
+// CDP Client API Key for RPC (separate from Secret Key)
+const CDP_CLIENT_KEY = process.env.CDP_CLIENT_KEY;
+
 function getProvider(): ethers.JsonRpcProvider {
-    // Use CDP RPC if available, otherwise fall back to public RPC
-    const rpcUrl = CDP_API_KEY
-        ? `https://api.developer.coinbase.com/rpc/v1/base/${CDP_API_KEY}`
+    // Use CDP RPC if client key available, otherwise fall back to public RPC
+    const rpcUrl = CDP_CLIENT_KEY
+        ? `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`
         : BASE_RPC_URL;
     return new ethers.JsonRpcProvider(rpcUrl);
 }
