@@ -308,14 +308,21 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             };
         }
 
-        // Resolve token addresses (support symbols like WETH, USDC)
-        const tokenInAddress = resolveTokenAddress(tokenIn);
-        const tokenOutAddress = resolveTokenAddress(tokenOut);
+        // Resolve token addresses (support symbols like WETH, USDC, or any token via CoinGecko)
+        const tokenInAddress = await resolveTokenAddressAsync(tokenIn);
+        const tokenOutAddress = await resolveTokenAddressAsync(tokenOut);
 
-        if (!tokenInAddress || !tokenOutAddress) {
+        if (!tokenInAddress) {
             return {
                 success: false,
-                error: "Invalid token. Use 0x address or symbol (WETH, USDC, BACK, DAI)"
+                error: `Unknown token: ${tokenIn}. Use 0x address or a valid symbol.`
+            };
+        }
+
+        if (!tokenOutAddress) {
+            return {
+                success: false,
+                error: `Unknown token: ${tokenOut}. Use 0x address or a valid symbol.`
             };
         }
 
@@ -1064,6 +1071,7 @@ export async function handleTechnicalAnalysis(input: TechnicalAnalysisInput): Pr
 }
 
 // Token symbol to address mapping for Base network
+// Common token symbols - fallback cache for known tokens
 const TOKEN_SYMBOLS: Record<string, string> = {
     'WETH': '0x4200000000000000000000000000000000000006',
     'ETH': '0x4200000000000000000000000000000000000006',
@@ -1071,6 +1079,13 @@ const TOKEN_SYMBOLS: Record<string, string> = {
     'BACK': '0x558881c4959e9cf961a7E1815FCD6586906babd2',
     'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+    'VIRTUAL': '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',
+    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
+    'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed',
+    'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4',
+    'TOSHI': '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4',
+    'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+    'rETH': '0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c',
 };
 
 // Reverse mapping: address to token info (symbol + decimals)
@@ -1080,6 +1095,13 @@ const TOKEN_INFO: Record<string, { symbol: string; decimals: number }> = {
     '0x558881c4959e9cf961a7e1815fcd6586906babd2': { symbol: 'BACK', decimals: 18 },
     '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': { symbol: 'USDbC', decimals: 6 },
     '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': { symbol: 'DAI', decimals: 18 },
+    '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b': { symbol: 'VIRTUAL', decimals: 18 },
+    '0x940181a94a35a4569e4529a3cdfb74e38fd98631': { symbol: 'AERO', decimals: 18 },
+    '0x4ed4e862860bed51a9570b96d89af5e1b0efefed': { symbol: 'DEGEN', decimals: 18 },
+    '0x532f27101965dd16442e59d40670faf5ebb142e4': { symbol: 'BRETT', decimals: 18 },
+    '0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4': { symbol: 'TOSHI', decimals: 18 },
+    '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22': { symbol: 'cbETH', decimals: 18 },
+    '0xb6fe221fe9eef5aba221c348ba20a1bf5e73624c': { symbol: 'rETH', decimals: 18 },
 };
 
 // Get token info from cache or on-chain
@@ -1105,15 +1127,76 @@ async function getTokenInfo(address: string, provider: ethers.JsonRpcProvider): 
     }
 }
 
+// Dynamic symbol cache - populated at runtime from API lookups
+const dynamicSymbolCache: Record<string, string> = {};
+
 // Resolve token input (address or symbol) to address
+// Now supports dynamic lookup via CoinGecko for unknown symbols
+async function resolveTokenAddressAsync(tokenInput: string): Promise<string | null> {
+    // If already an address
+    if (isValidAddress(tokenInput)) {
+        return tokenInput;
+    }
+
+    const upper = tokenInput.toUpperCase();
+
+    // Check static cache first
+    if (TOKEN_SYMBOLS[upper]) {
+        return TOKEN_SYMBOLS[upper];
+    }
+
+    // Check dynamic cache
+    if (dynamicSymbolCache[upper]) {
+        return dynamicSymbolCache[upper];
+    }
+
+    // Try CoinGecko search for unknown symbols
+    console.log(`[resolveToken] Looking up unknown symbol: ${upper}`);
+    try {
+        const searchRes = await fetch(
+            `${COINGECKO_API}/search?query=${encodeURIComponent(tokenInput)}`,
+            { headers: { 'Accept': 'application/json' } }
+        );
+
+        if (searchRes.ok) {
+            const data = await searchRes.json();
+            // Find a coin that matches and has Base platform
+            for (const coin of data.coins || []) {
+                if (coin.symbol?.toUpperCase() === upper) {
+                    // Get detailed info to find Base contract address
+                    const coinRes = await fetch(
+                        `${COINGECKO_API}/coins/${coin.id}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false`,
+                        { headers: { 'Accept': 'application/json' } }
+                    );
+
+                    if (coinRes.ok) {
+                        const coinData = await coinRes.json();
+                        const baseAddress = coinData.platforms?.base;
+                        if (baseAddress && isValidAddress(baseAddress)) {
+                            console.log(`[resolveToken] Found ${upper} on Base: ${baseAddress}`);
+                            dynamicSymbolCache[upper] = baseAddress;
+                            return baseAddress;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.log(`[resolveToken] CoinGecko lookup failed:`, e);
+    }
+
+    return null;
+}
+
+// Sync version for backward compatibility (uses cache only)
 function resolveTokenAddress(tokenInput: string): string | null {
     // If already an address
     if (isValidAddress(tokenInput)) {
         return tokenInput;
     }
-    // Try symbol lookup
+    // Try symbol lookup from static + dynamic cache
     const upper = tokenInput.toUpperCase();
-    return TOKEN_SYMBOLS[upper] || null;
+    return TOKEN_SYMBOLS[upper] || dynamicSymbolCache[upper] || null;
 }
 
 /**
@@ -1143,21 +1226,21 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
             };
         }
 
-        // Resolve token addresses (support both symbols and addresses)
-        const tokenInAddress = resolveTokenAddress(tokenIn);
-        const tokenOutAddress = resolveTokenAddress(tokenOut);
+        // Resolve token addresses (support symbols via CoinGecko lookup)
+        const tokenInAddress = await resolveTokenAddressAsync(tokenIn);
+        const tokenOutAddress = await resolveTokenAddressAsync(tokenOut);
 
         if (!tokenInAddress) {
             return {
                 success: false,
-                error: `Invalid tokenIn: ${tokenIn}. Use 0x address or symbol (WETH, USDC, BACK, DAI)`
+                error: `Unknown token: ${tokenIn}. Use 0x address or a valid symbol.`
             };
         }
 
         if (!tokenOutAddress) {
             return {
                 success: false,
-                error: `Invalid tokenOut: ${tokenOut}. Use 0x address or symbol (WETH, USDC, BACK, DAI)`
+                error: `Unknown token: ${tokenOut}. Use 0x address or a valid symbol.`
             };
         }
 
