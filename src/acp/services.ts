@@ -1828,7 +1828,7 @@ export async function processServiceRequest(
                 result = await handleExecuteSwap(input);
                 break;
 
-            case 'lpAnalysis':
+            case 'lpanalysis':
             case 'lp_analysis':
             case 'lp-analysis':
             case 'lp-position':
@@ -1837,7 +1837,7 @@ export async function processServiceRequest(
                 result = await handleLPAnalysis(input);
                 break;
 
-            case 'topPools':
+            case 'toppools':
             case 'top_pools':
             case 'top-pools':
             case 'best-yields':
@@ -1845,7 +1845,7 @@ export async function processServiceRequest(
                 result = await handleTopPools(input);
                 break;
 
-            case 'defiYield':
+            case 'defiyield':
             case 'defi_yield':
             case 'defi-yield':
             case 'yield-analysis':
