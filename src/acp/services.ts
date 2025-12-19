@@ -1081,15 +1081,18 @@ const TOKEN_SYMBOLS: Record<string, string> = {
     'ETH': '0x4200000000000000000000000000000000000006',
     'USDC': '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
     'BACK': '0x558881c4959e9cf961a7E1815FCD6586906babd2',
-    'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+    'USDBC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',  // USDbC (bridged)
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
     'VIRTUAL': '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',
     'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
     'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed',
     'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4',
     'TOSHI': '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4',
-    'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
-    'rETH': '0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c',
+    'CBETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',  // cbETH
+    'RETH': '0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c',
+    'CBBTC': '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',  // cbBTC
+    'HIGHER': '0x0578d8A44db98B23BF096A382e016e29a5Ce0ffe',
+    'WELL': '0xA88594D404727625A9437C3f886C7643872296AE',
 };
 
 // Reverse mapping: address to token info (symbol + decimals)
@@ -1106,6 +1109,9 @@ const TOKEN_INFO: Record<string, { symbol: string; decimals: number }> = {
     '0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4': { symbol: 'TOSHI', decimals: 18 },
     '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22': { symbol: 'cbETH', decimals: 18 },
     '0xb6fe221fe9eef5aba221c348ba20a1bf5e73624c': { symbol: 'rETH', decimals: 18 },
+    '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf': { symbol: 'cbBTC', decimals: 8 },
+    '0x0578d8a44db98b23bf096a382e016e29a5ce0ffe': { symbol: 'HIGHER', decimals: 18 },
+    '0xa88594d404727625a9437c3f886c7643872296ae': { symbol: 'WELL', decimals: 18 },
 };
 
 // Get token info from cache or on-chain
@@ -2105,13 +2111,39 @@ function calculateTradingAPR(
     return dailyAPR * 365;
 }
 
+// Price cache to reduce API calls
+const priceCache: Record<string, { price: number; timestamp: number }> = {};
+const PRICE_CACHE_TTL = 60000; // 1 minute
+
+// Fallback prices for common tokens (updated periodically)
+const FALLBACK_PRICES: Record<string, number> = {
+    '0x4200000000000000000000000000000000000006': 3000,   // WETH ~$3000
+    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 1,      // USDC
+    '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': 1,      // USDbC
+    '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 1,      // DAI
+    '0x940181a94a35a4569e4529a3cdfb74e38fd98631': 1.5,    // AERO ~$1.50
+    '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b': 2,      // VIRTUAL ~$2
+    '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf': 100000, // cbBTC ~$100k
+    '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22': 3200,   // cbETH ~$3200
+};
+
 /**
- * Get token price from CoinGecko
+ * Get token price from CoinGecko with caching and fallback
  */
 async function getTokenPriceUSD(tokenAddress: string): Promise<number> {
+    const lowerAddress = tokenAddress.toLowerCase();
+
+    // Check cache first
+    const cached = priceCache[lowerAddress];
+    if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
+        return cached.price;
+    }
+
     try {
-        const url = `${COINGECKO_API}/simple/token_price/base?contract_addresses=${tokenAddress}&vs_currencies=usd`;
-        const headers: Record<string, string> = {};
+        const url = `${COINGECKO_API}/simple/token_price/base?contract_addresses=${lowerAddress}&vs_currencies=usd`;
+        const headers: Record<string, string> = {
+            'Accept': 'application/json'
+        };
         if (process.env.COINGECKO_API_KEY) {
             headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
         }
@@ -2119,11 +2151,23 @@ async function getTokenPriceUSD(tokenAddress: string): Promise<number> {
         const response = await fetch(url, { headers });
         if (response.ok) {
             const data = await response.json();
-            return data[tokenAddress.toLowerCase()]?.usd || 0;
+            const price = data[lowerAddress]?.usd || 0;
+            if (price > 0) {
+                priceCache[lowerAddress] = { price, timestamp: Date.now() };
+                return price;
+            }
         }
     } catch (e) {
-        console.log(`[LP] Price fetch failed for ${tokenAddress}`);
+        console.log(`[LP] CoinGecko price fetch failed for ${tokenAddress}`);
     }
+
+    // Use fallback price
+    const fallback = FALLBACK_PRICES[lowerAddress];
+    if (fallback) {
+        console.log(`[LP] Using fallback price for ${tokenAddress}: $${fallback}`);
+        return fallback;
+    }
+
     return 0;
 }
 
@@ -2153,12 +2197,16 @@ async function analyzeAerodromePool(
         const token0Contract = new ethers.Contract(token0Addr, ERC20_ABI, provider);
         const token1Contract = new ethers.Contract(token1Addr, ERC20_ABI, provider);
 
-        const [symbol0, symbol1, decimals0, decimals1] = await Promise.all([
+        const [symbol0, symbol1, decimals0Raw, decimals1Raw] = await Promise.all([
             token0Contract.symbol(),
             token1Contract.symbol(),
             token0Contract.decimals(),
             token1Contract.decimals()
         ]);
+
+        // Convert BigInt decimals to Number
+        const decimals0 = Number(decimals0Raw);
+        const decimals1 = Number(decimals1Raw);
 
         // Get prices
         const [price0, price1] = await Promise.all([
@@ -2351,12 +2399,16 @@ async function analyzeUniswapV3Position(
         const token0Contract = new ethers.Contract(token0Addr, ERC20_ABI, provider);
         const token1Contract = new ethers.Contract(token1Addr, ERC20_ABI, provider);
 
-        const [symbol0, symbol1, decimals0, decimals1] = await Promise.all([
+        const [symbol0, symbol1, decimals0Raw, decimals1Raw] = await Promise.all([
             token0Contract.symbol(),
             token1Contract.symbol(),
             token0Contract.decimals(),
             token1Contract.decimals()
         ]);
+
+        // Convert BigInt decimals to Number
+        const decimals0 = Number(decimals0Raw);
+        const decimals1 = Number(decimals1Raw);
 
         // Get prices
         const [price0, price1] = await Promise.all([
@@ -2854,7 +2906,14 @@ export async function handleYieldAnalysis(input: YieldAnalysisInput): Promise<Yi
                     if (poolAddress) {
                         const analysis = await analyzeAerodromePool(poolAddress);
                         if (analysis) {
-                            const tvlNum = parseFloat(analysis.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
+                            // Parse TVL with K/M/B suffixes
+                            const tvlStr = analysis.tvlUSD.replace(/[$,]/g, '');
+                            let tvlNum = parseFloat(tvlStr) || 0;
+                            if (tvlStr.includes('T')) tvlNum *= 1e12;
+                            else if (tvlStr.includes('B')) tvlNum *= 1e9;
+                            else if (tvlStr.includes('M')) tvlNum *= 1e6;
+                            else if (tvlStr.includes('K')) tvlNum *= 1e3;
+
                             if (tvlNum < 10000) continue; // Skip tiny pools
 
                             const baseAPR = parseFloat(analysis.apr.trading) || 0;
