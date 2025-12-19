@@ -229,12 +229,15 @@ async function handleRequestPhase(job: AcpJob, jobName: string) {
         const fareAmount = new FareAmount(amountIn, fare);
 
         // Request funds from buyer using PAYABLE_REQUEST
-        console.log(`   📤 Requesting ${amountIn} ${tokenIn} from buyer...`);
+        // Use ACP_AGENT_WALLET_ADDRESS (EOA) instead of job.providerAddress (smart account)
+        // so we can directly execute swaps with the received funds
+        const receivingWallet = ACP_AGENT_WALLET_ADDRESS as Address;
+        console.log(`   📤 Requesting ${amountIn} ${tokenIn} from buyer to ${receivingWallet}...`);
         await job.createPayableRequirement(
             `Send ${amountIn} ${tokenIn} to execute swap`,
             MemoType.PAYABLE_REQUEST,
             fareAmount,
-            job.providerAddress // Our wallet receives the funds
+            receivingWallet // EOA wallet that can execute swaps
         );
         console.log(`   ✅ Payable requirement created`);
 
