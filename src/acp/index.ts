@@ -53,7 +53,12 @@ let acpInitialized = false;
 const FUND_TRANSFER_JOBS = ['execute-swap', 'swap', 'trade', 'swap_token'];
 
 // Service-only jobs (no fund transfer)
-const SERVICE_ONLY_JOBS = ['getSwapQuote', 'getPoolAnalysis', 'getTechnicalAnalysis', 'swap-quote', 'pool-analysis', 'technical-analysis'];
+const SERVICE_ONLY_JOBS = [
+    'swapQuote', 'getSwapQuote', 'swap-quote',  // Quote services
+    'getPoolAnalysis', 'pool-analysis',          // Pool analysis
+    'getTechnicalAnalysis', 'technical-analysis', // Technical analysis
+    'defiYield', 'lpAnalysis', 'topPools'        // LP/Yield services
+];
 
 /**
  * Check if ACP is properly configured
@@ -66,8 +71,16 @@ export function isAcpConfigured(): boolean {
  * Determine if a job requires fund transfer
  */
 function isFundTransferJob(jobName: string): boolean {
+    const jobLower = jobName.toLowerCase();
+
+    // First check if it's explicitly a service-only job (no funds needed)
+    if (SERVICE_ONLY_JOBS.some(name => jobLower === name.toLowerCase())) {
+        return false;
+    }
+
+    // Then check if it matches fund transfer patterns
     return FUND_TRANSFER_JOBS.some(name =>
-        jobName.toLowerCase().includes(name.toLowerCase())
+        jobLower.includes(name.toLowerCase())
     );
 }
 

@@ -29,8 +29,15 @@ import {
 } from '../market-data/patterns';
 import { OHLCV } from '../market-data/types';
 
-// Base Mainnet Configuration
-const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+// Base Mainnet Configuration - Multiple RPCs for fallback
+const BASE_RPC_URLS = [
+    'https://mainnet.base.org',
+    'https://base.llamarpc.com',
+    'https://base.drpc.org',
+    'https://1rpc.io/base',
+    'https://base-mainnet.public.blastapi.io'
+];
+const BASE_RPC_URL = process.env.BASE_RPC_URL || BASE_RPC_URLS[0];
 const SILVERBACK_UNIFIED_ROUTER = '0x565cBf0F3eAdD873212Db91896e9a548f6D64894';
 const SILVERBACK_V2_FACTORY = '0x9cd714C51586B52DD56EbD19E3676de65eBf44Ae';
 const WETH_BASE = '0x4200000000000000000000000000000000000006';
@@ -2079,19 +2086,12 @@ export interface LPAnalysisOutput {
         summary: {
             totalPositions: number;
             totalValueUSD: string;
-            totalAPR: string;
+            averageAPR: string;
             protocols: string[];
         };
         positions: LPPositionData[];
-        marketContext: {
-            gasPrice: string;
-            aeroPrice?: string;
-            bestOpportunities?: {
-                pool: string;
-                apr: string;
-                tvl: string;
-            }[];
-        };
+        pair?: string;
+        timestamp?: string;
     };
     error?: string;
 }
@@ -2604,113 +2604,168 @@ async function getUserV3Positions(walletAddress: string): Promise<string[]> {
  * Price: $0.05 USDC
  *
  * Comprehensive liquidity position analytics for DeFi agents
+ * Uses DefiLlama API for reliable data without rate limits
  */
 export async function handleLPAnalysis(input: LPAnalysisInput): Promise<LPAnalysisOutput> {
     try {
         const positions: LPPositionData[] = [];
         const protocols: Set<string> = new Set();
 
-        // Case 1: Analyze specific pool
-        if (input.poolAddress) {
-            const position = await analyzeAerodromePool(input.poolAddress, input.walletAddress);
-            if (position) {
-                positions.push(position);
-                protocols.add(position.protocol);
-            }
+        // Determine token pair to search for
+        let tokenA: string = '';
+        let tokenB: string = '';
+
+        if (input.tokenPair) {
+            const parts = input.tokenPair.split('/');
+            tokenA = parts[0]?.trim().toUpperCase() || '';
+            tokenB = parts[1]?.trim().toUpperCase() || '';
+        } else if (input.tokenA && input.tokenB) {
+            tokenA = input.tokenA.toUpperCase();
+            tokenB = input.tokenB.toUpperCase();
         }
 
-        // Case 2: Find pool by token pair
-        else if (input.tokenPair || (input.tokenA && input.tokenB)) {
-            let tokenA: string, tokenB: string;
-
-            if (input.tokenPair) {
-                const [a, b] = input.tokenPair.split('/');
-                tokenA = a.trim();
-                tokenB = b.trim();
-            } else {
-                tokenA = input.tokenA!;
-                tokenB = input.tokenB!;
-            }
-
-            // Check Aerodrome
-            if (!input.protocol || input.protocol === 'aerodrome' || input.protocol === 'all') {
-                const aeroPool = await findAerodromePool(tokenA, tokenB);
-                if (aeroPool) {
-                    const position = await analyzeAerodromePool(aeroPool, input.walletAddress);
-                    if (position) {
-                        positions.push(position);
-                        protocols.add('Aerodrome');
-                    }
-                }
-            }
-
-            // Check Uniswap V3
-            if (!input.protocol || input.protocol === 'uniswap' || input.protocol === 'all') {
-                try {
-                    const provider = getProvider();
-                    const factory = new ethers.Contract(
-                        PROTOCOLS.uniswapV3.factory,
-                        UNISWAP_V3_FACTORY_ABI,
-                        provider
-                    );
-
-                    const addrA = await resolveTokenAddressAsync(tokenA);
-                    const addrB = await resolveTokenAddressAsync(tokenB);
-
-                    if (addrA && addrB) {
-                        // Check common fee tiers: 0.01%, 0.05%, 0.3%, 1%
-                        const feeTiers = [100, 500, 3000, 10000];
-                        for (const fee of feeTiers) {
-                            const poolAddr = await factory.getPool(addrA, addrB, fee);
-                            if (poolAddr !== ethers.ZeroAddress) {
-                                // For V3 we need position ID, so just note the pool exists
-                                console.log(`[LP] Found Uniswap V3 pool at ${poolAddr} (${fee/10000}% fee)`);
-                            }
-                        }
-                    }
-                } catch (e) {
-                    // V3 lookup failed
-                }
-            }
+        if (!tokenA || !tokenB) {
+            return {
+                success: false,
+                error: 'Please provide tokenPair (e.g., "USDC/WETH") or tokenA and tokenB'
+            };
         }
 
-        // Case 3: Analyze all positions for a wallet
-        else if (input.walletAddress) {
-            // Get Uniswap V3 positions
-            if (!input.protocol || input.protocol === 'uniswap' || input.protocol === 'all') {
-                const v3PositionIds = await getUserV3Positions(input.walletAddress);
-                for (const posId of v3PositionIds.slice(0, 10)) { // Limit to 10
-                    const position = await analyzeUniswapV3Position(posId, input.walletAddress);
-                    if (position) {
-                        positions.push(position);
-                        protocols.add('Uniswap V3');
-                    }
-                }
-            }
+        // Fetch from DefiLlama
+        console.log(`[LP] Fetching pool data from DefiLlama for ${tokenA}/${tokenB}...`);
+        const response = await fetch('https://yields.llama.fi/pools', {
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+            return {
+                success: false,
+                error: `Failed to fetch pool data: ${response.status}`
+            };
         }
 
-        // Case 4: Specific V3 position
-        else if (input.positionId) {
-            const position = await analyzeUniswapV3Position(input.positionId, input.walletAddress);
-            if (position) {
-                positions.push(position);
-                protocols.add('Uniswap V3');
+        const llamaData = await response.json();
+
+        // Resolve token addresses
+        const addrA = await resolveTokenAddressAsync(tokenA);
+        const addrB = await resolveTokenAddressAsync(tokenB);
+
+        if (!addrA || !addrB) {
+            return {
+                success: false,
+                error: `Could not resolve token addresses for ${tokenA} or ${tokenB}`
+            };
+        }
+
+        const addrALower = addrA.toLowerCase();
+        const addrBLower = addrB.toLowerCase();
+
+        // Find matching pools (contain both tokens)
+        const matchingPools = llamaData.data.filter((pool: any) => {
+            if (pool.chain !== 'Base') return false;
+            if (!pool.underlyingTokens || pool.underlyingTokens.length < 2) return false;
+
+            const poolTokens = pool.underlyingTokens.map((t: string) => t.toLowerCase());
+            return poolTokens.includes(addrALower) && poolTokens.includes(addrBLower);
+        });
+
+        console.log(`[LP] Found ${matchingPools.length} pools for ${tokenA}/${tokenB}`);
+
+        // Convert to position data
+        for (const pool of matchingPools) {
+            let protocol = pool.project || 'Unknown';
+            if (protocol.includes('aerodrome')) {
+                protocol = pool.project.includes('slipstream') ? 'Aerodrome Slipstream' : 'Aerodrome';
+            } else if (protocol.includes('uniswap')) {
+                protocol = 'Uniswap V3';
             }
+
+            const baseAPY = pool.apyBase || 0;
+            const rewardAPY = pool.apyReward || 0;
+            const totalAPY = pool.apy || (baseAPY + rewardAPY);
+
+            const risks: string[] = [];
+            const recommendations: string[] = [];
+
+            if (pool.ilRisk === 'yes') {
+                risks.push('Impermanent loss risk on volatile pair');
+            }
+            if (pool.tvlUsd < 100000) {
+                risks.push('Lower liquidity - higher slippage');
+            }
+            if (rewardAPY > 100) {
+                risks.push('High reward APY may not be sustainable');
+            }
+            if (totalAPY > 50) {
+                recommendations.push('Consider farming rewards while APY is high');
+            }
+
+            let healthScore = 50;
+            if (pool.tvlUsd > 1000000) healthScore += 20;
+            else if (pool.tvlUsd > 100000) healthScore += 10;
+            if (totalAPY > 10) healthScore += 15;
+            if (pool.ilRisk === 'no') healthScore += 10;
+
+            positions.push({
+                protocol,
+                poolAddress: pool.pool || 'N/A',
+                poolType: pool.poolMeta?.includes('CL') ? 'concentrated' : (pool.stablecoin ? 'stable' : 'volatile'),
+                token0: {
+                    address: pool.underlyingTokens?.[0] || '',
+                    symbol: pool.symbol?.split('-')[0] || tokenA,
+                    decimals: 18,
+                    reserve: 'N/A',
+                    priceUSD: 'N/A'
+                },
+                token1: {
+                    address: pool.underlyingTokens?.[1] || '',
+                    symbol: pool.symbol?.split('-')[1] || tokenB,
+                    decimals: 18,
+                    reserve: 'N/A',
+                    priceUSD: 'N/A'
+                },
+                tvlUSD: formatLargeNumber(pool.tvlUsd),
+                apr: {
+                    trading: baseAPY.toFixed(2) + '%',
+                    rewards: rewardAPY.toFixed(2) + '%',
+                    total: totalAPY.toFixed(2) + '%'
+                },
+                volume24h: pool.volumeUsd1d ? formatLargeNumber(pool.volumeUsd1d) : 'N/A',
+                fees24h: 'N/A',
+                healthScore,
+                recommendations,
+                risks,
+                timestamp: new Date().toISOString()
+            });
+
+            protocols.add(protocol);
         }
 
         if (positions.length === 0) {
             return {
                 success: false,
-                error: 'No LP positions found. Provide poolAddress, tokenPair (e.g., "USDC/WETH"), or walletAddress.'
+                error: `No pools found for ${tokenA}/${tokenB} on Base. Try different tokens.`
             };
         }
 
-        // Calculate summary
+        // Calculate summary from DefiLlama data (no on-chain calls needed)
         let totalValueUSD = 0;
         let weightedAPR = 0;
 
         for (const pos of positions) {
-            const value = parseFloat(pos.userValueUSD || pos.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
+            // Parse TVL from formatted string
+            const tvlStr = pos.tvlUSD.replace(/[$,]/g, '');
+            let value = 0;
+            if (tvlStr.endsWith('M')) {
+                value = parseFloat(tvlStr) * 1000000;
+            } else if (tvlStr.endsWith('K')) {
+                value = parseFloat(tvlStr) * 1000;
+            } else if (tvlStr.endsWith('B')) {
+                value = parseFloat(tvlStr) * 1000000000;
+            } else {
+                value = parseFloat(tvlStr) || 0;
+            }
+
             const apr = parseFloat(pos.apr.total) || 0;
             totalValueUSD += value;
             weightedAPR += apr * value;
@@ -2720,10 +2775,8 @@ export async function handleLPAnalysis(input: LPAnalysisInput): Promise<LPAnalys
             weightedAPR = weightedAPR / totalValueUSD;
         }
 
-        // Get market context
-        const provider = getProvider();
-        const gasPrice = await provider.getFeeData();
-        const aeroPrice = await getTokenPriceUSD(PROTOCOLS.aerodrome.aero);
+        // Sort by APR (highest first)
+        positions.sort((a, b) => parseFloat(b.apr.total) - parseFloat(a.apr.total));
 
         return {
             success: true,
@@ -2731,14 +2784,12 @@ export async function handleLPAnalysis(input: LPAnalysisInput): Promise<LPAnalys
                 summary: {
                     totalPositions: positions.length,
                     totalValueUSD: formatLargeNumber(totalValueUSD),
-                    totalAPR: weightedAPR.toFixed(2) + '%',
+                    averageAPR: weightedAPR.toFixed(2) + '%',
                     protocols: Array.from(protocols)
                 },
-                positions,
-                marketContext: {
-                    gasPrice: gasPrice.gasPrice ? ethers.formatUnits(gasPrice.gasPrice, 'gwei') + ' gwei' : 'N/A',
-                    aeroPrice: '$' + aeroPrice.toFixed(4)
-                }
+                positions: positions.slice(0, 10), // Top 10 by APR
+                pair: `${tokenA}/${tokenB}`,
+                timestamp: new Date().toISOString()
             }
         };
     } catch (e) {
@@ -2750,64 +2801,84 @@ export async function handleLPAnalysis(input: LPAnalysisInput): Promise<LPAnalys
 }
 
 /**
- * Get top yielding pools on Aerodrome
+ * Get top yielding pools on Base (Aerodrome, Uniswap, etc.)
+ * Uses DefiLlama API for reliable, fast data
  */
 export async function handleTopPools(input: { limit?: number; minTvl?: number }): Promise<any> {
     try {
-        const provider = getProvider();
-        const factory = new ethers.Contract(
-            PROTOCOLS.aerodrome.factory,
-            AERODROME_FACTORY_ABI,
-            provider
-        );
-
-        const limit = input.limit || 10;
+        const limit = Math.min(input.limit || 10, 20);
         const minTvl = input.minTvl || 100000;
 
-        // Get total pools
-        const totalPools = await factory.allPoolsLength();
-        console.log(`[LP] Scanning ${totalPools} Aerodrome pools...`);
+        console.log(`[TopPools] Fetching pool data from DefiLlama...`);
+        const response = await fetch('https://yields.llama.fi/pools', {
+            headers: { 'Accept': 'application/json' }
+        });
 
-        const pools: any[] = [];
-
-        // Sample pools (checking all would be too slow)
-        const sampleSize = Math.min(50, Number(totalPools));
-        const step = Math.floor(Number(totalPools) / sampleSize);
-
-        for (let i = 0; i < sampleSize && pools.length < limit; i++) {
-            try {
-                const poolAddr = await factory.allPools(i * step);
-                const analysis = await analyzeAerodromePool(poolAddr);
-
-                if (analysis) {
-                    const tvl = parseFloat(analysis.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
-                    const apr = parseFloat(analysis.apr.total) || 0;
-
-                    if (tvl >= minTvl) {
-                        pools.push({
-                            pool: `${analysis.token0.symbol}/${analysis.token1.symbol}`,
-                            address: poolAddr,
-                            type: analysis.poolType,
-                            tvl: analysis.tvlUSD,
-                            apr: analysis.apr.total,
-                            rewards: analysis.apr.rewards
-                        });
-                    }
-                }
-            } catch (e) {
-                // Skip failed pools
-            }
+        if (!response.ok) {
+            return {
+                success: false,
+                error: `Failed to fetch pool data: ${response.status}`
+            };
         }
 
-        // Sort by APR
-        pools.sort((a, b) => parseFloat(b.apr) - parseFloat(a.apr));
+        const llamaData = await response.json();
+
+        // Filter for Base chain pools with min TVL
+        const basePools = llamaData.data.filter((pool: any) => {
+            if (pool.chain !== 'Base') return false;
+            if ((pool.tvlUsd || 0) < minTvl) return false;
+            if (!pool.apy && !pool.apyBase) return false;
+            return true;
+        });
+
+        console.log(`[TopPools] Found ${basePools.length} Base pools above $${minTvl} TVL`);
+
+        // Sort by total APY (highest first)
+        basePools.sort((a: any, b: any) => {
+            const apyA = a.apy || ((a.apyBase || 0) + (a.apyReward || 0));
+            const apyB = b.apy || ((b.apyBase || 0) + (b.apyReward || 0));
+            return apyB - apyA;
+        });
+
+        // Take top N pools
+        const topPools = basePools.slice(0, limit).map((pool: any) => {
+            const baseAPY = pool.apyBase || 0;
+            const rewardAPY = pool.apyReward || 0;
+            const totalAPY = pool.apy || (baseAPY + rewardAPY);
+
+            let protocol = pool.project || 'Unknown';
+            if (protocol.includes('aerodrome')) {
+                protocol = pool.project.includes('slipstream') ? 'Aerodrome Slipstream' : 'Aerodrome';
+            } else if (protocol.includes('uniswap')) {
+                protocol = 'Uniswap V3';
+            }
+
+            let poolType = 'volatile';
+            if (pool.stablecoin) poolType = 'stable';
+            else if (pool.poolMeta?.includes('CL')) poolType = 'concentrated';
+
+            return {
+                pool: pool.symbol || 'Unknown',
+                address: pool.pool || 'N/A',
+                protocol,
+                type: poolType,
+                tvl: formatLargeNumber(pool.tvlUsd),
+                apr: {
+                    trading: baseAPY.toFixed(2) + '%',
+                    rewards: rewardAPY.toFixed(2) + '%',
+                    total: totalAPY.toFixed(2) + '%'
+                },
+                ilRisk: pool.ilRisk === 'yes' ? 'High' : 'Low'
+            };
+        });
 
         return {
             success: true,
             data: {
-                topPools: pools.slice(0, limit),
-                scanned: sampleSize,
-                total: Number(totalPools),
+                topPools,
+                scanned: basePools.length,
+                total: llamaData.data.filter((p: any) => p.chain === 'Base').length,
+                minTvlFilter: formatLargeNumber(minTvl),
                 timestamp: new Date().toISOString()
             }
         };
@@ -2912,75 +2983,100 @@ export async function handleYieldAnalysis(input: YieldAnalysisInput): Promise<Yi
 
         const opportunities: YieldOpportunity[] = [];
 
-        // Get paired tokens to check
-        const pairedTokens = TOKEN_PAIRS[token] || ['USDC', 'WETH'];
+        // Fetch yield data from DefiLlama (reliable, no rate limits)
+        console.log(`[DefiYield] Fetching yield data from DefiLlama for ${token}...`);
+        const response = await fetch('https://yields.llama.fi/pools', {
+            headers: { 'Accept': 'application/json' }
+        });
 
-        // Check Aerodrome pools
-        for (const pairedToken of pairedTokens) {
-            try {
-                // Check both stable and volatile pools
-                for (const isStable of [false, true]) {
-                    const poolAddress = await findAerodromePoolByTokens(token, pairedToken, isStable);
-                    if (poolAddress) {
-                        const analysis = await analyzeAerodromePool(poolAddress);
-                        if (analysis) {
-                            // Parse TVL with K/M/B suffixes
-                            const tvlStr = analysis.tvlUSD.replace(/[$,]/g, '');
-                            let tvlNum = parseFloat(tvlStr) || 0;
-                            if (tvlStr.includes('T')) tvlNum *= 1e12;
-                            else if (tvlStr.includes('B')) tvlNum *= 1e9;
-                            else if (tvlStr.includes('M')) tvlNum *= 1e6;
-                            else if (tvlStr.includes('K')) tvlNum *= 1e3;
+        if (!response.ok) {
+            return {
+                success: false,
+                error: `Failed to fetch yield data: ${response.status}`
+            };
+        }
 
-                            if (tvlNum < 10000) continue; // Skip tiny pools
+        const llamaData = await response.json();
+        const tokenAddressLower = tokenAddress.toLowerCase();
 
-                            const baseAPR = parseFloat(analysis.apr.trading) || 0;
-                            const rewardsAPR = parseFloat(analysis.apr.rewards) || 0;
-                            const totalAPR = baseAPR + rewardsAPR;
+        // Filter for Base chain pools containing our token
+        const relevantPools = llamaData.data.filter((pool: any) => {
+            if (pool.chain !== 'Base') return false;
+            if (!pool.underlyingTokens) return false;
+            // Check if pool contains our token
+            return pool.underlyingTokens.some((addr: string) =>
+                addr.toLowerCase() === tokenAddressLower
+            );
+        });
 
-                            // Calculate IL risk for volatile pairs
-                            let ilEstimate: string | undefined;
-                            let netAPR: string | undefined;
-                            const risks: string[] = [];
+        console.log(`[DefiYield] Found ${relevantPools.length} pools containing ${token}`);
 
-                            if (!isStable) {
-                                // Rough IL estimate: assume 20% price divergence = 0.6% IL
-                                const estimatedIL = 2.0; // Conservative estimate for volatile pairs
-                                ilEstimate = estimatedIL.toFixed(2) + '%';
-                                netAPR = (totalAPR - estimatedIL).toFixed(2) + '%';
-                                risks.push('Impermanent loss risk on volatile pair');
-                            }
+        // Process each pool
+        for (const pool of relevantPools) {
+            // Skip tiny pools
+            if (pool.tvlUsd < 10000) continue;
 
-                            if (tvlNum < 100000) {
-                                risks.push('Lower liquidity - higher slippage');
-                            }
-                            if (rewardsAPR > 50) {
-                                risks.push('High reward APR may not be sustainable');
-                            }
+            const baseAPY = pool.apyBase || 0;
+            const rewardAPY = pool.apyReward || 0;
+            const totalAPY = pool.apy || (baseAPY + rewardAPY);
 
-                            opportunities.push({
-                                protocol: 'Aerodrome',
-                                type: 'lp',
-                                pool: `${analysis.token0.symbol}/${analysis.token1.symbol}`,
-                                pairedToken,
-                                tvl: analysis.tvlUSD,
-                                apr: {
-                                    base: analysis.apr.trading,
-                                    rewards: analysis.apr.rewards,
-                                    total: analysis.apr.total
-                                },
-                                risks,
-                                impermanentLoss: ilEstimate ? {
-                                    estimatedIL: ilEstimate,
-                                    netAPR: netAPR!
-                                } : undefined
-                            });
-                        }
-                    }
-                }
-            } catch (e) {
-                // Skip failed pools
+            // Skip pools with no yield data
+            if (totalAPY === 0 && pool.tvlUsd < 100000) continue;
+
+            const risks: string[] = [];
+
+            // IL risk
+            let ilEstimate: string | undefined;
+            let netAPY: string | undefined;
+            if (pool.ilRisk === 'yes') {
+                const estimatedIL = 2.0; // Conservative estimate
+                ilEstimate = estimatedIL.toFixed(2) + '%';
+                netAPY = (totalAPY - estimatedIL).toFixed(2) + '%';
+                risks.push('Impermanent loss risk');
             }
+
+            // Low liquidity risk
+            if (pool.tvlUsd < 100000) {
+                risks.push('Lower liquidity - higher slippage');
+            }
+
+            // High/unstable APY risk
+            if (rewardAPY > 100) {
+                risks.push('High reward APY may not be sustainable');
+            }
+            if (pool.outlier) {
+                risks.push('APY outlier - may be temporary');
+            }
+
+            // Determine protocol name
+            let protocol = pool.project || 'Unknown';
+            if (protocol.includes('aerodrome')) {
+                protocol = 'Aerodrome';
+                if (pool.project.includes('slipstream')) {
+                    protocol = 'Aerodrome Slipstream';
+                }
+            } else if (protocol.includes('uniswap')) {
+                protocol = 'Uniswap V3';
+            } else if (protocol.includes('morpho')) {
+                protocol = 'Morpho';
+            }
+
+            opportunities.push({
+                protocol,
+                type: pool.exposure === 'single' ? 'lending' : 'lp',
+                pool: pool.symbol,
+                tvl: formatLargeNumber(pool.tvlUsd),
+                apr: {
+                    base: baseAPY.toFixed(2) + '%',
+                    rewards: rewardAPY.toFixed(2) + '%',
+                    total: totalAPY.toFixed(2) + '%'
+                },
+                risks,
+                impermanentLoss: ilEstimate ? {
+                    estimatedIL: ilEstimate,
+                    netAPR: netAPY!
+                } : undefined
+            });
         }
 
         // Sort by total APR
