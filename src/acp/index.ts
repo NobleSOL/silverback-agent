@@ -129,13 +129,15 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         // Create the ACP plugin
         // Note: We use 'as any' to bridge version mismatch between game-acp-plugin (v0.2.x)
         // and acp-node (v0.3.x). The underlying functionality is compatible.
+        // Set keepCompletedJobs and keepCancelledJobs to 0 to avoid compatibility issues
+        // with the v0.3.x API returning paginated results instead of arrays.
         acpPlugin = new AcpPlugin({
             apiKey: process.env.API_KEY!,
             acpClient: acpClient as any,
             cluster: ACP_CLUSTER,
             jobExpiryDurationMins: 1440, // 24 hours
-            keepCompletedJobs: 10,
-            keepCancelledJobs: 5,
+            keepCompletedJobs: 0,  // Disabled due to v0.3.x API incompatibility
+            keepCancelledJobs: 0,  // Disabled due to v0.3.x API incompatibility
             keepProducedInventory: 20
         });
 

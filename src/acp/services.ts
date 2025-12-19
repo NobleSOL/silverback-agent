@@ -1554,8 +1554,16 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
         }
 
         // Get provider and wallet
+        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY;
+        if (!SWAP_PRIVATE_KEY) {
+            return {
+                success: false,
+                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY or WALLET_PRIVATE_KEY must be set."
+            };
+        }
+
         const provider = getProvider();
-        const wallet = new ethers.Wallet(process.env.WHITELISTED_WALLET_PRIVATE_KEY!, provider);
+        const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
 
         // Get token info
         const { decimals: decimalsIn, symbol: symbolIn } = await getTokenInfo(tokenInAddress, provider);
