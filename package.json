@@ -29,6 +29,7 @@
     "@coingecko/coingecko-typescript": "^2.3.0",
     "@types/dotenv": "^6.1.1",
     "@types/jsonwebtoken": "^9.0.10",
+    "@virtuals-protocol/acp-node": "^0.3.0-beta.15",
     "@virtuals-protocol/game": "^0.1.9",
     "@virtuals-protocol/game-acp-plugin": "^0.2.9",
     "@virtuals-protocol/game-imagegen-plugin": "^0.1.0",

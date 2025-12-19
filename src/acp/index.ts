@@ -5,16 +5,27 @@
  * to enable agent-to-agent commerce and service offerings.
  *
  * Services Offered:
- * 1. Swap Quote ($0.02) - Get optimal swap route with price impact
- * 2. Pool Analysis ($0.10) - Comprehensive liquidity pool analysis
- * 3. Technical Analysis ($0.25) - Full TA with indicators and patterns
- * 4. Execute Swap (Phase 2) - Actual swap execution
+ * 1. Swap Quote ($0.02) - Get optimal swap route with price impact (service-only)
+ * 2. Pool Analysis ($0.10) - Comprehensive liquidity pool analysis (service-only)
+ * 3. Technical Analysis ($0.25) - Full TA with indicators and patterns (service-only)
+ * 4. Execute Swap - Actual swap execution with buyer's funds (fund-transfer job)
  */
 
 import AcpPlugin, { AcpState } from "@virtuals-protocol/game-acp-plugin";
-import AcpClient, { AcpContractClient, baseAcpConfig } from "@virtuals-protocol/acp-node";
-import { processServiceRequest } from "./services";
+import AcpClient, {
+    AcpContractClientV2,
+    AcpJob,
+    AcpJobPhases,
+    AcpMemo,
+    baseAcpConfigV2,
+    Fare,
+    FareAmount,
+    MemoType,
+    DeliverablePayload
+} from "@virtuals-protocol/acp-node";
+import { processServiceRequest, handleExecuteSwapWithFunds } from "./services";
 import dotenv from "dotenv";
+import { Address } from "viem";
 
 dotenv.config();
 
@@ -27,9 +38,18 @@ const ACP_PRIVATE_KEY = process.env.ACP_PRIVATE_KEY || process.env.WHITELISTED_W
 const ACP_ENTITY_ID = process.env.ACP_ENTITY_ID;
 const ACP_CLUSTER = process.env.ACP_CLUSTER || 'defi'; // DeFi cluster for AHF integration
 
+// ACP V2 config for fund transfers
+const config = baseAcpConfigV2;
+
 let acpPlugin: AcpPlugin | null = null;
 let acpClient: AcpClient | null = null;
 let acpInitialized = false;
+
+// Job types that require fund transfers
+const FUND_TRANSFER_JOBS = ['execute-swap', 'swap', 'trade', 'swap_token'];
+
+// Service-only jobs (no fund transfer)
+const SERVICE_ONLY_JOBS = ['getSwapQuote', 'getPoolAnalysis', 'getTechnicalAnalysis', 'swap-quote', 'pool-analysis', 'technical-analysis'];
 
 /**
  * Check if ACP is properly configured
@@ -39,7 +59,16 @@ export function isAcpConfigured(): boolean {
 }
 
 /**
- * Initialize the ACP Plugin
+ * Determine if a job requires fund transfer
+ */
+function isFundTransferJob(jobName: string): boolean {
+    return FUND_TRANSFER_JOBS.some(name =>
+        jobName.toLowerCase().includes(name.toLowerCase())
+    );
+}
+
+/**
+ * Initialize the ACP Plugin with V2 support for fund transfers
  * Call this before initializing the GAME agent
  */
 export async function initializeAcp(): Promise<AcpPlugin | null> {
@@ -55,10 +84,9 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
     }
 
     try {
-        console.log("🔗 Initializing ACP integration...");
+        console.log("🔗 Initializing ACP V2 integration...");
 
         // Build the ACP contract client
-        // Note: Private key should NOT include the 0x prefix per ACP docs
         let privateKey = ACP_PRIVATE_KEY!.trim();
 
         // Remove 0x prefix if present
@@ -69,7 +97,6 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         // Validate private key format
         if (privateKey.length !== 64) {
             console.error(`❌ ACP_PRIVATE_KEY invalid length: ${privateKey.length} chars (expected 64)`);
-            console.error(`   First 4 chars: ${privateKey.substring(0, 4)}...`);
             return null;
         }
 
@@ -85,121 +112,26 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         // Add 0x prefix for the SDK
         const privateKeyWithPrefix = `0x${privateKey}` as `0x${string}`;
 
-        const acpContractClient = await AcpContractClient.build(
+        // Use V2 contract client for fund transfer support
+        const acpContractClient = await AcpContractClientV2.build(
             privateKeyWithPrefix,
             parseInt(ACP_ENTITY_ID!, 10),
             ACP_AGENT_WALLET_ADDRESS! as `0x${string}`,
-            undefined, // Use default RPC
-            baseAcpConfig // Base mainnet
+            config
         );
 
         // Create ACP client with WebSocket callbacks for job notifications
         acpClient = new AcpClient({
             acpContractClient,
-            // Called when a new job is assigned to this agent
-            onNewTask: async (job: any) => {
-                const jobId = job.id || job.jobId;
-                const phase = job.phase;
-                const memoId = job.memo?.[job.memo?.length - 1]?.id;
-
-                console.log(`\n📥 [ACP WebSocket] Job event!`);
-                console.log(`   Job ID: ${jobId}, Phase: ${phase}, MemoId: ${memoId}`);
-                console.log(`   Client (buyer): ${job.clientAddress}`);
-
-                try {
-                    // Get service details - handle various nested structures
-                    const desc = job.desc || {};
-                    const jobRequirement = desc.requirement || job.serviceRequirement || job.requirement || {};
-
-                    // Service name can be in desc.name or inside the requirement object
-                    let serviceName = desc.name || jobRequirement.name || 'unknown';
-                    // The actual parameters are in requirement.requirement or just requirement
-                    let serviceParams = jobRequirement.requirement || jobRequirement;
-
-                    // If serviceName is still unknown, try to infer from params
-                    if (serviceName === 'unknown' && serviceParams.tokenIn && serviceParams.tokenOut) {
-                        serviceName = 'getSwapQuote';
-                    } else if (serviceName === 'unknown' && serviceParams.tokenA && serviceParams.tokenB) {
-                        serviceName = 'getPoolAnalysis';
-                    } else if (serviceName === 'unknown' && serviceParams.token) {
-                        serviceName = 'getTechnicalAnalysis';
-                    }
-
-                    console.log(`   Service: ${serviceName}`);
-                    console.log(`   Params: ${JSON.stringify(serviceParams).substring(0, 200)}`);
-
-                    // Phase 0 (REQUEST) - Accept the job
-                    if (phase === 0 || phase === 'request') {
-                        console.log(`   🔄 Phase 0: Accepting job...`);
-                        if (typeof job.respond === 'function') {
-                            await job.respond(true);
-                            console.log(`   ✅ Job accepted via job.respond()`);
-                        } else if (acpClient && memoId) {
-                            await (acpClient as any).respondJob(jobId, memoId, true, "Job accepted by Silverback");
-                            console.log(`   ✅ Job accepted via acpClient.respondJob()`);
-                        } else {
-                            console.log(`   ⚠️ Cannot respond - no respond method available`);
-                        }
-                    }
-                    // Phase 2 (TRANSACTION) - Deliver the service
-                    else if (phase === 2 || phase === 'transaction') {
-                        console.log(`   🔄 Phase 2: Processing and delivering...`);
-
-                        // Get buyer's wallet address from job for swap execution
-                        // AcpJob.clientAddress is the buyer's wallet
-                        const buyerAddress = job.clientAddress;
-                        if (buyerAddress) {
-                            console.log(`   Buyer wallet: ${buyerAddress}`);
-                            // Add buyer's wallet to params for execute-swap
-                            if (!serviceParams.walletAddress && (serviceName === 'execute-swap' || serviceName === 'swap' || serviceName === 'trade')) {
-                                serviceParams.walletAddress = buyerAddress;
-                            }
-                        }
-
-                        // Process the service request
-                        const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
-                        console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
-
-                        // Format deliverable per IDeliverable interface: { type: string, value: string | object }
-                        // Parse the JSON string to object for value field
-                        let parsedValue;
-                        try {
-                            parsedValue = JSON.parse(result.deliverable);
-                        } catch {
-                            parsedValue = result.deliverable;
-                        }
-                        const deliverablePayload = {
-                            type: serviceName,
-                            value: parsedValue
-                        };
-                        console.log(`   Deliverable payload:`, JSON.stringify(deliverablePayload).substring(0, 200));
-
-                        // Deliver the result
-                        if (typeof job.deliver === 'function') {
-                            await job.deliver(deliverablePayload);
-                            console.log(`   ✅ Deliverable submitted via job.deliver()`);
-                        } else if (acpClient) {
-                            await (acpClient as any).deliverJob(jobId, deliverablePayload);
-                            console.log(`   ✅ Deliverable submitted via acpClient.deliverJob()`);
-                        }
-                    }
-                    else {
-                        console.log(`   ℹ️ Phase ${phase} - no action needed from provider`);
-                    }
-                } catch (err: any) {
-                    console.error(`   ❌ Error handling job:`, err.message);
-                }
-            },
-            // Called when we need to evaluate a job (as buyer)
-            onEvaluate: async (job: any) => {
-                console.log(`\n📋 [ACP WebSocket] Evaluation requested for job ${job.id || job.jobId}`);
-            }
+            onNewTask: handleNewTask,
         });
 
         // Create the ACP plugin
+        // Note: We use 'as any' to bridge version mismatch between game-acp-plugin (v0.2.x)
+        // and acp-node (v0.3.x). The underlying functionality is compatible.
         acpPlugin = new AcpPlugin({
             apiKey: process.env.API_KEY!,
-            acpClient,
+            acpClient: acpClient as any,
             cluster: ACP_CLUSTER,
             jobExpiryDurationMins: 1440, // 24 hours
             keepCompletedJobs: 10,
@@ -208,9 +140,10 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         });
 
         acpInitialized = true;
-        console.log("✅ ACP integration initialized successfully!");
+        console.log("✅ ACP V2 integration initialized successfully!");
         console.log(`   Wallet: ${ACP_AGENT_WALLET_ADDRESS}`);
-        console.log(`   Cluster: ${ACP_CLUSTER}\n`);
+        console.log(`   Cluster: ${ACP_CLUSTER}`);
+        console.log(`   Fund transfers: ENABLED\n`);
 
         return acpPlugin;
 
@@ -218,6 +151,231 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
         console.error("❌ Failed to initialize ACP:", error);
         return null;
     }
+}
+
+/**
+ * Handle incoming ACP job tasks
+ */
+async function handleNewTask(job: AcpJob, memoToSign?: AcpMemo) {
+    const jobId = job.id;
+    const jobPhase = job.phase;
+    const jobName = job.name || 'unknown';
+
+    console.log(`\n📥 [ACP] Job ${jobId} - Phase: ${AcpJobPhases[jobPhase]}, Service: ${jobName}`);
+    console.log(`   Client: ${job.clientAddress}`);
+    console.log(`   Requirement:`, JSON.stringify(job.requirement).substring(0, 200));
+
+    if (!memoToSign) {
+        console.log(`   ⚠️ No memo to sign`);
+        return;
+    }
+
+    try {
+        // Handle based on job phase
+        if (jobPhase === AcpJobPhases.REQUEST) {
+            await handleRequestPhase(job, jobName);
+        } else if (jobPhase === AcpJobPhases.TRANSACTION) {
+            await handleTransactionPhase(job, jobName);
+        } else {
+            console.log(`   ℹ️ Phase ${AcpJobPhases[jobPhase]} - no action needed`);
+        }
+    } catch (err: any) {
+        console.error(`   ❌ Error handling job:`, err.message);
+        // Try to reject the job on error
+        try {
+            await job.reject(`Error processing job: ${err.message}`);
+        } catch (rejectErr) {
+            console.error(`   ❌ Failed to reject job:`, rejectErr);
+        }
+    }
+}
+
+/**
+ * Handle REQUEST phase - Accept job and request funds if needed
+ */
+async function handleRequestPhase(job: AcpJob, jobName: string) {
+    console.log(`   🔄 REQUEST phase: Evaluating job...`);
+
+    const requirement = job.requirement as any;
+
+    if (isFundTransferJob(jobName)) {
+        // Fund transfer job (swap execution)
+        console.log(`   💰 Fund transfer job detected`);
+
+        // Accept the job
+        await job.accept("Silverback accepts swap execution request");
+        console.log(`   ✅ Job accepted`);
+
+        // Determine the token and amount to request
+        const tokenIn = requirement.tokenIn || requirement.fromSymbol || 'USDC';
+        const amountIn = parseFloat(requirement.amountIn || requirement.amount || '0');
+
+        if (amountIn <= 0) {
+            await job.reject("Invalid swap amount");
+            return;
+        }
+
+        // Get the token contract address for the fare
+        const tokenAddress = await getTokenAddress(tokenIn);
+        if (!tokenAddress) {
+            await job.reject(`Unknown token: ${tokenIn}`);
+            return;
+        }
+
+        // Create fare for the requested token
+        const fare = await Fare.fromContractAddress(tokenAddress as Address, config);
+        const fareAmount = new FareAmount(amountIn, fare);
+
+        // Request funds from buyer using PAYABLE_REQUEST
+        console.log(`   📤 Requesting ${amountIn} ${tokenIn} from buyer...`);
+        await job.createPayableRequirement(
+            `Send ${amountIn} ${tokenIn} to execute swap`,
+            MemoType.PAYABLE_REQUEST,
+            fareAmount,
+            job.providerAddress // Our wallet receives the funds
+        );
+        console.log(`   ✅ Payable requirement created`);
+
+    } else {
+        // Service-only job (quote, analysis, etc.)
+        console.log(`   📋 Service-only job detected`);
+        await job.accept("Silverback accepts service request");
+        await job.createRequirement("Processing your request...");
+        console.log(`   ✅ Job accepted`);
+    }
+}
+
+/**
+ * Handle TRANSACTION phase - Execute service/swap and deliver results
+ */
+async function handleTransactionPhase(job: AcpJob, jobName: string) {
+    console.log(`   🔄 TRANSACTION phase: Executing...`);
+
+    const requirement = job.requirement as any;
+
+    if (isFundTransferJob(jobName)) {
+        // Fund transfer job - use buyer's funds to execute swap
+        const netAmount = job.netPayableAmount || 0;
+        console.log(`   💰 Net payable amount received: ${netAmount}`);
+
+        if (netAmount <= 0) {
+            console.log(`   ❌ No funds received, rejecting job`);
+            await job.reject("No funds received for swap execution");
+            return;
+        }
+
+        // Execute the swap with the received funds
+        const tokenIn = requirement.tokenIn || requirement.fromSymbol || 'USDC';
+        const tokenOut = requirement.tokenOut || requirement.toSymbol;
+        const slippage = requirement.slippage || '1';
+
+        console.log(`   🔄 Executing swap: ${netAmount} ${tokenIn} -> ${tokenOut}`);
+
+        try {
+            // Execute swap and get the output amount
+            const swapResult = await handleExecuteSwapWithFunds({
+                tokenIn,
+                tokenOut,
+                amountIn: netAmount.toString(),
+                slippage,
+                recipientAddress: job.clientAddress // Send swapped tokens to buyer
+            });
+
+            if (!swapResult.success) {
+                // Refund the buyer on failure
+                console.log(`   ❌ Swap failed: ${swapResult.error}`);
+                const tokenAddress = await getTokenAddress(tokenIn);
+                const fare = await Fare.fromContractAddress(tokenAddress as Address, config);
+                await job.rejectPayable(
+                    `Swap failed: ${swapResult.error}. Refunding ${netAmount} ${tokenIn}`,
+                    new FareAmount(netAmount, fare)
+                );
+                return;
+            }
+
+            // Deliver the swapped tokens to buyer
+            const outputAmount = parseFloat(swapResult.data?.actualOutput || '0');
+            const tokenOutAddress = await getTokenAddress(tokenOut);
+            const outputFare = await Fare.fromContractAddress(tokenOutAddress as Address, config);
+
+            const deliverable: DeliverablePayload = {
+                type: "swap_result",
+                value: {
+                    txHash: swapResult.data?.txHash,
+                    sold: `${netAmount} ${tokenIn}`,
+                    received: `${outputAmount} ${tokenOut}`,
+                    executionPrice: swapResult.data?.executionPrice,
+                    recipient: job.clientAddress
+                }
+            };
+
+            console.log(`   📤 Delivering ${outputAmount} ${tokenOut} to buyer...`);
+            await job.deliverPayable(
+                deliverable,
+                new FareAmount(outputAmount, outputFare),
+                true // skipFee - we already took our fee in the swap
+            );
+            console.log(`   ✅ Swap completed and delivered!`);
+
+        } catch (swapErr: any) {
+            console.error(`   ❌ Swap execution error:`, swapErr.message);
+            // Try to refund
+            try {
+                const tokenAddress = await getTokenAddress(tokenIn);
+                const fare = await Fare.fromContractAddress(tokenAddress as Address, config);
+                await job.rejectPayable(
+                    `Swap error: ${swapErr.message}. Refunding ${netAmount} ${tokenIn}`,
+                    new FareAmount(netAmount, fare)
+                );
+            } catch (refundErr) {
+                console.error(`   ❌ Refund failed:`, refundErr);
+            }
+        }
+
+    } else {
+        // Service-only job - process and deliver
+        const result = await processServiceRequest(jobName, JSON.stringify(requirement));
+        console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
+
+        // Parse the deliverable
+        let parsedValue;
+        try {
+            parsedValue = JSON.parse(result.deliverable);
+        } catch {
+            parsedValue = result.deliverable;
+        }
+
+        const deliverable: DeliverablePayload = {
+            type: jobName,
+            value: parsedValue
+        };
+
+        await job.deliver(deliverable);
+        console.log(`   ✅ Delivered!`);
+    }
+}
+
+/**
+ * Get token contract address from symbol
+ */
+async function getTokenAddress(symbol: string): Promise<string | null> {
+    // Common Base tokens
+    const tokens: Record<string, string> = {
+        'USDC': '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        'WETH': '0x4200000000000000000000000000000000000006',
+        'ETH': '0x4200000000000000000000000000000000000006',
+        'VIRTUAL': '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',
+        'BACK': '0x558881c4959e9cf961a7E1815FCD6586906babd2',
+        'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+        'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+    };
+
+    // Check if it's already an address
+    if (symbol.startsWith('0x') && symbol.length === 42) {
+        return symbol;
+    }
+
+    return tokens[symbol.toUpperCase()] || null;
 }
 
 /**
@@ -236,16 +394,13 @@ export function getAcpClient(): AcpClient | null {
 
 /**
  * Get the ACP worker for the GAME agent
- * Returns null if ACP is not configured
  */
 export function getAcpWorker() {
     if (!acpPlugin) {
         return null;
     }
 
-    // Return the worker with custom service functions
     return acpPlugin.getWorker({
-        // Additional environment data for the worker
         getEnvironment: async () => {
             return {
                 silverback_services: [
@@ -253,29 +408,34 @@ export function getAcpWorker() {
                         name: "Swap Quote",
                         description: "Get optimal swap route with price impact, fees, and expected output",
                         price: "$0.02 USDC",
+                        requiresFunds: false,
                         input: "{ tokenIn, tokenOut, amountIn }"
                     },
                     {
                         name: "Pool Analysis",
                         description: "Comprehensive liquidity pool analysis with reserves, APY, health metrics",
                         price: "$0.10 USDC",
+                        requiresFunds: false,
                         input: "{ poolId } or { tokenA, tokenB }"
                     },
                     {
                         name: "Technical Analysis",
                         description: "Full TA with RSI, MACD, Bollinger, patterns, support/resistance",
                         price: "$0.25 USDC",
+                        requiresFunds: false,
                         input: "{ token, timeframe }"
                     },
                     {
                         name: "Execute Swap",
-                        description: "Execute swap on Silverback DEX (Phase 2 - Coming Soon)",
-                        price: "0.1% of trade value (min $0.50)",
-                        input: "{ tokenIn, tokenOut, amountIn, slippage, walletAddress }"
+                        description: "Execute token swap using your funds - send tokens, receive swapped tokens",
+                        price: "0.5% of trade value",
+                        requiresFunds: true,
+                        input: "{ tokenIn, tokenOut, amountIn, slippage }"
                     }
                 ],
-                chains_supported: ["Base", "Keeta"],
-                dex_router: "0x565cBf0F3eAdD873212Db91896e9a548f6D64894"
+                chains_supported: ["Base"],
+                dex_router: "0x565cBf0F3eAdD873212Db91896e9a548f6D64894",
+                fund_transfer_enabled: true
             };
         }
     });
@@ -307,25 +467,13 @@ export async function getAcpState(): Promise<{ acp_status: string; [key: string]
 }
 
 /**
- * Get the ACP agent description to add to the GAME agent
+ * Get the ACP agent description
  */
 export function getAcpAgentDescription(): string {
     if (!acpPlugin) {
         return "";
     }
     return acpPlugin.agentDescription;
-}
-
-/**
- * Process an incoming ACP job request
- * This is called when another agent requests a service from Silverback
- */
-export async function processAcpJob(
-    serviceType: string,
-    serviceRequirements: string
-): Promise<string> {
-    const result = await processServiceRequest(serviceType, serviceRequirements);
-    return result.deliverable;
 }
 
 // Export service handlers for direct use
