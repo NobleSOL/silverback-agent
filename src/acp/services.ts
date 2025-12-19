@@ -13,6 +13,7 @@
 
 import { ethers } from 'ethers';
 import * as crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import {
     calculateAllIndicators,
     analyzeMarketConditions,
@@ -85,66 +86,49 @@ function getProvider(): ethers.JsonRpcProvider {
  * Generate JWT for CDP API authentication
  * Based on CDP docs: https://docs.cdp.coinbase.com/api-reference/v2/authentication
  */
-async function generateCdpJwt(method: string, path: string): Promise<string | null> {
+function generateCdpJwt(method: string, path: string): string | null {
     if (!CDP_API_KEY || !CDP_API_SECRET) {
         return null;
     }
 
     try {
         const keyName = CDP_API_KEY;
-        const keySecret = CDP_API_SECRET;
+        let keySecret = CDP_API_SECRET;
+
+        // Format the key as PEM if it's not already
+        if (!keySecret.includes('-----BEGIN')) {
+            // The key is raw base64, wrap it in PEM format
+            // CDP uses ES256 which is ECDSA with P-256 curve
+            keySecret = `-----BEGIN EC PRIVATE KEY-----\n${keySecret}\n-----END EC PRIVATE KEY-----`;
+        }
 
         const host = 'api.cdp.coinbase.com';
         const uri = `${method} ${host}${path}`;
 
         const now = Math.floor(Date.now() / 1000);
-        const payload = {
-            sub: keyName,
-            iss: 'cdp',
-            aud: ['cdp_service'],
-            nbf: now,
-            exp: now + 120, // 2 minute expiry
-            uris: [uri]
-        };
 
-        const header = {
-            alg: 'ES256',
-            kid: keyName,
-            typ: 'JWT',
-            nonce: crypto.randomBytes(16).toString('hex')
-        };
+        // Use jsonwebtoken library for proper ES256 signing
+        const token = jwt.sign(
+            {
+                iss: 'cdp',
+                nbf: now,
+                exp: now + 120, // 2 minute expiry
+                sub: keyName,
+                uri
+            },
+            keySecret,
+            {
+                algorithm: 'ES256',
+                header: {
+                    alg: 'ES256',
+                    kid: keyName,
+                    typ: 'JWT',
+                    nonce: crypto.randomBytes(16).toString('hex')
+                }
+            }
+        );
 
-        // Base64url encode
-        const base64UrlEncode = (obj: any) => {
-            return Buffer.from(JSON.stringify(obj))
-                .toString('base64')
-                .replace(/=/g, '')
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_');
-        };
-
-        const headerEncoded = base64UrlEncode(header);
-        const payloadEncoded = base64UrlEncode(payload);
-        const message = `${headerEncoded}.${payloadEncoded}`;
-
-        // Parse PEM key and sign
-        const privateKey = crypto.createPrivateKey({
-            key: keySecret.includes('BEGIN') ? keySecret : `-----BEGIN EC PRIVATE KEY-----\n${keySecret}\n-----END EC PRIVATE KEY-----`,
-            format: 'pem'
-        });
-
-        const sign = crypto.createSign('SHA256');
-        sign.update(message);
-        const signature = sign.sign(privateKey);
-
-        // Convert DER signature to raw r||s format for ES256
-        const sigBase64Url = signature
-            .toString('base64')
-            .replace(/=/g, '')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
-
-        return `${message}.${sigBase64Url}`;
+        return token;
     } catch (e) {
         console.log('[CDP JWT] Error generating token:', e instanceof Error ? e.message : e);
         return null;
@@ -329,15 +313,15 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
         if (CDP_API_KEY && CDP_API_SECRET) {
             console.log(`[SwapQuote] Fetching quote from CDP Swap API for ${amountIn} ${symbolIn} → ${symbolOut}`);
             try {
-                const jwt = await generateCdpJwt('POST', '/platform/v2/evm/swaps');
-                if (jwt) {
+                const cdpJwt = generateCdpJwt('POST', '/platform/v2/evm/swaps');
+                if (cdpJwt) {
                     // Use a placeholder taker address for quote-only requests
                     const takerAddress = process.env.WHITELISTED_WALLET_ADDRESS || '0x0000000000000000000000000000000000000001';
 
                     const cdpResponse = await fetch(CDP_SWAP_API, {
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${jwt}`,
+                            'Authorization': `Bearer ${cdpJwt}`,
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
