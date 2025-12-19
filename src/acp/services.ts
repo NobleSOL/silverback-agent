@@ -1372,12 +1372,12 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
                             // If recipient is different from taker, transfer the received tokens
                             let finalTxHash = receipt!.hash;
                             if (recipient.toLowerCase() !== wallet.address.toLowerCase()) {
+                                // Transfer only the amount received from this swap, not entire balance
+                                const amountToTransfer = BigInt(cdpData.toAmount);
                                 console.log(`[ExecuteSwap] Transferring ${amountOutHuman} ${symbolOut} to ${recipient}...`);
                                 try {
                                     const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, wallet);
-                                    // Get actual received balance (may differ slightly from quote)
-                                    const receivedBalance = await tokenOutContract.balanceOf(wallet.address);
-                                    const transferTx = await tokenOutContract.getFunction('transfer')(recipient, receivedBalance);
+                                    const transferTx = await tokenOutContract.getFunction('transfer')(recipient, amountToTransfer);
                                     const transferReceipt = await transferTx.wait();
                                     console.log(`[ExecuteSwap] Transfer confirmed: ${transferReceipt.hash}`);
                                     finalTxHash = transferReceipt.hash; // Use transfer tx as final
