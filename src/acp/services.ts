@@ -84,6 +84,9 @@ function getProvider(): ethers.JsonRpcProvider {
 /**
  * Generate JWT for CDP API authentication
  * Based on CDP docs: https://docs.cdp.coinbase.com/api-reference/v2/authentication
+ *
+ * CDP Secret API Keys use EdDSA (Ed25519) algorithm, NOT ES256
+ * The key is base64-encoded: first 32 bytes = seed, next 32 bytes = public key
  */
 function generateCdpJwt(method: string, path: string): string | null {
     if (!CDP_API_KEY || !CDP_API_SECRET) {
@@ -92,14 +95,13 @@ function generateCdpJwt(method: string, path: string): string | null {
 
     try {
         const keyName = CDP_API_KEY;
-        let keySecret = CDP_API_SECRET;
+        const keySecret = CDP_API_SECRET;
 
-        // Format the key as PEM if it's not already
-        if (!keySecret.includes('-----BEGIN')) {
-            // The key is raw base64, wrap it in PEM format
-            // CDP uses ES256 which is ECDSA with P-256 curve
-            keySecret = `-----BEGIN EC PRIVATE KEY-----\n${keySecret}\n-----END EC PRIVATE KEY-----`;
-        }
+        // Decode the base64 key - it's 64 bytes: 32-byte seed + 32-byte public key
+        const keyBytes = Buffer.from(keySecret, 'base64');
+
+        // Extract the seed (first 32 bytes) for Ed25519 signing
+        const seed = keyBytes.subarray(0, 32);
 
         const host = 'api.cdp.coinbase.com';
         const uri = `${method} ${host}${path}`;
@@ -107,21 +109,21 @@ function generateCdpJwt(method: string, path: string): string | null {
         const now = Math.floor(Date.now() / 1000);
         const nonce = crypto.randomBytes(16).toString('hex');
 
-        // Manually construct JWT with custom nonce header
-        // Header
+        // Header for EdDSA
         const header = {
-            alg: 'ES256',
-            kid: keyName,
+            alg: 'EdDSA',
             typ: 'JWT',
+            kid: keyName,
             nonce: nonce
         };
 
-        // Payload
+        // Payload per CDP docs
         const payload = {
+            sub: keyName,
             iss: 'cdp',
+            aud: ['cdp_service'],
             nbf: now,
             exp: now + 120,
-            sub: keyName,
             uri
         };
 
@@ -135,44 +137,20 @@ function generateCdpJwt(method: string, path: string): string | null {
         const payloadEncoded = base64UrlEncode(JSON.stringify(payload));
         const message = `${headerEncoded}.${payloadEncoded}`;
 
-        // Sign with ES256 (ECDSA P-256 + SHA-256)
-        const sign = crypto.createSign('SHA256');
-        sign.update(message);
-        const derSignature = sign.sign(keySecret);
+        // Create Ed25519 private key from seed
+        const privateKey = crypto.createPrivateKey({
+            key: Buffer.concat([
+                // Ed25519 PKCS8 prefix for 32-byte seed
+                Buffer.from('302e020100300506032b657004220420', 'hex'),
+                seed
+            ]),
+            format: 'der',
+            type: 'pkcs8'
+        });
 
-        // Convert DER signature to raw R||S format (64 bytes for P-256)
-        // DER format: 0x30 [len] 0x02 [r-len] [r] 0x02 [s-len] [s]
-        let r: Buffer, s: Buffer;
-        const derBuffer = Buffer.from(derSignature);
-
-        // Parse DER structure
-        let offset = 2; // Skip 0x30 and length byte
-
-        // Read R
-        if (derBuffer[offset] !== 0x02) throw new Error('Invalid DER: expected 0x02 for R');
-        offset++;
-        const rLen = derBuffer[offset];
-        offset++;
-        r = derBuffer.subarray(offset, offset + rLen);
-        offset += rLen;
-
-        // Read S
-        if (derBuffer[offset] !== 0x02) throw new Error('Invalid DER: expected 0x02 for S');
-        offset++;
-        const sLen = derBuffer[offset];
-        offset++;
-        s = derBuffer.subarray(offset, offset + sLen);
-
-        // Remove leading zeros if present (DER encoding adds them for positive numbers)
-        if (r.length > 32 && r[0] === 0) r = r.subarray(1);
-        if (s.length > 32 && s[0] === 0) s = s.subarray(1);
-
-        // Pad to 32 bytes if needed
-        if (r.length < 32) r = Buffer.concat([Buffer.alloc(32 - r.length), r]);
-        if (s.length < 32) s = Buffer.concat([Buffer.alloc(32 - s.length), s]);
-
-        const rawSignature = Buffer.concat([r, s]);
-        const signatureEncoded = base64UrlEncode(rawSignature);
+        // Sign with Ed25519
+        const signature = crypto.sign(null, Buffer.from(message), privateKey);
+        const signatureEncoded = base64UrlEncode(signature);
 
         return `${message}.${signatureEncoded}`;
     } catch (e) {
