@@ -1841,10 +1841,22 @@ export async function processServiceRequest(
                 result = await handleTopPools(input);
                 break;
 
+            case 'defi-yield':
             case 'yield-analysis':
             case 'token-yield':
-            case 'defi-yield':
             case 'yield-opportunities':
+            case 'find-yields':
+            case 'get-yields':
+            case 'best-returns':
+            case 'yield-farming':
+            case 'apy-analysis':
+            case 'earn-opportunities':
+            case 'where-to-stake':
+            case 'maximize-yield':
+            case 'yield-strategy':
+            case 'base-yields':
+            case 'aerodrome-yields':
+            case 'lp-yields':
                 result = await handleYieldAnalysis(input);
                 break;
 
