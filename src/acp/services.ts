@@ -13,7 +13,6 @@
 
 import { ethers } from 'ethers';
 import * as crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import {
     calculateAllIndicators,
     analyzeMarketConditions,
@@ -106,29 +105,76 @@ function generateCdpJwt(method: string, path: string): string | null {
         const uri = `${method} ${host}${path}`;
 
         const now = Math.floor(Date.now() / 1000);
+        const nonce = crypto.randomBytes(16).toString('hex');
 
-        // Use jsonwebtoken library for proper ES256 signing
-        const token = jwt.sign(
-            {
-                iss: 'cdp',
-                nbf: now,
-                exp: now + 120, // 2 minute expiry
-                sub: keyName,
-                uri
-            },
-            keySecret,
-            {
-                algorithm: 'ES256',
-                header: {
-                    alg: 'ES256',
-                    kid: keyName,
-                    typ: 'JWT',
-                    nonce: crypto.randomBytes(16).toString('hex')
-                }
-            }
-        );
+        // Manually construct JWT with custom nonce header
+        // Header
+        const header = {
+            alg: 'ES256',
+            kid: keyName,
+            typ: 'JWT',
+            nonce: nonce
+        };
 
-        return token;
+        // Payload
+        const payload = {
+            iss: 'cdp',
+            nbf: now,
+            exp: now + 120,
+            sub: keyName,
+            uri
+        };
+
+        // Base64url encode helper
+        const base64UrlEncode = (data: string | Buffer): string => {
+            const base64 = Buffer.from(data).toString('base64');
+            return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+        };
+
+        const headerEncoded = base64UrlEncode(JSON.stringify(header));
+        const payloadEncoded = base64UrlEncode(JSON.stringify(payload));
+        const message = `${headerEncoded}.${payloadEncoded}`;
+
+        // Sign with ES256 (ECDSA P-256 + SHA-256)
+        const sign = crypto.createSign('SHA256');
+        sign.update(message);
+        const derSignature = sign.sign(keySecret);
+
+        // Convert DER signature to raw R||S format (64 bytes for P-256)
+        // DER format: 0x30 [len] 0x02 [r-len] [r] 0x02 [s-len] [s]
+        let r: Buffer, s: Buffer;
+        const derBuffer = Buffer.from(derSignature);
+
+        // Parse DER structure
+        let offset = 2; // Skip 0x30 and length byte
+
+        // Read R
+        if (derBuffer[offset] !== 0x02) throw new Error('Invalid DER: expected 0x02 for R');
+        offset++;
+        const rLen = derBuffer[offset];
+        offset++;
+        r = derBuffer.subarray(offset, offset + rLen);
+        offset += rLen;
+
+        // Read S
+        if (derBuffer[offset] !== 0x02) throw new Error('Invalid DER: expected 0x02 for S');
+        offset++;
+        const sLen = derBuffer[offset];
+        offset++;
+        s = derBuffer.subarray(offset, offset + sLen);
+
+        // Remove leading zeros if present (DER encoding adds them for positive numbers)
+        if (r.length > 32 && r[0] === 0) r = r.subarray(1);
+        if (s.length > 32 && s[0] === 0) s = s.subarray(1);
+
+        // Pad to 32 bytes if needed
+        if (r.length < 32) r = Buffer.concat([Buffer.alloc(32 - r.length), r]);
+        if (s.length < 32) s = Buffer.concat([Buffer.alloc(32 - s.length), s]);
+
+        const rawSignature = Buffer.concat([r, s]);
+        const signatureEncoded = base64UrlEncode(rawSignature);
+
+        return `${message}.${signatureEncoded}`;
     } catch (e) {
         console.log('[CDP JWT] Error generating token:', e instanceof Error ? e.message : e);
         return null;
