@@ -26,6 +26,7 @@ import AcpClient, {
 import { processServiceRequest, handleExecuteSwapWithFunds } from "./services";
 import dotenv from "dotenv";
 import { Address } from "viem";
+import { ethers } from "ethers";
 
 dotenv.config();
 
@@ -304,7 +305,28 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
             // Deliver the swapped tokens to buyer
             const outputAmount = parseFloat(swapResult.data?.actualOutput || '0');
             const tokenOutAddress = await getTokenAddress(tokenOut);
+            if (!tokenOutAddress) {
+                throw new Error(`Unknown token: ${tokenOut}`);
+            }
             const outputFare = await Fare.fromContractAddress(tokenOutAddress as Address, config);
+
+            // Transfer tokens from EOA to smart account so deliverPayable can send them
+            // ACP's deliverPayable() transfers from the registered smart account wallet
+            const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || process.env.ACP_PRIVATE_KEY;
+            if (SWAP_PRIVATE_KEY) {
+                const provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
+                const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
+                const tokenContract = new ethers.Contract(
+                    tokenOutAddress,
+                    ['function transfer(address to, uint256 amount) returns (bool)'],
+                    wallet
+                );
+                const amountWei = ethers.parseUnits(swapResult.data?.actualOutput || '0', outputFare.decimals);
+                console.log(`   📤 Transferring ${outputAmount} ${tokenOut} to smart account ${ACP_AGENT_WALLET_ADDRESS}...`);
+                const transferTx = await tokenContract.transfer(ACP_AGENT_WALLET_ADDRESS, amountWei);
+                await transferTx.wait();
+                console.log(`   ✅ Transfer to smart account confirmed`);
+            }
 
             const deliverable: DeliverablePayload = {
                 type: "swap_result",
@@ -317,7 +339,7 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
                 }
             };
 
-            console.log(`   📤 Delivering ${outputAmount} ${tokenOut} to buyer...`);
+            console.log(`   📤 Delivering ${outputAmount} ${tokenOut} to buyer via ACP...`);
             await job.deliverPayable(
                 deliverable,
                 new FareAmount(outputAmount, outputFare),
