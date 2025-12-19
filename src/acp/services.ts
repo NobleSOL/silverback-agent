@@ -1211,11 +1211,11 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
         const { tokenIn, tokenOut, amountIn, slippage, walletAddress } = input;
 
         // Check if swap execution is enabled
-        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY;
+        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || process.env.ACP_PRIVATE_KEY;
         if (!SWAP_PRIVATE_KEY) {
             return {
                 success: false,
-                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY or WALLET_PRIVATE_KEY must be set."
+                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY, WALLET_PRIVATE_KEY, or ACP_PRIVATE_KEY must be set."
             };
         }
 
@@ -1554,11 +1554,11 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
         }
 
         // Get provider and wallet
-        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY;
+        const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || process.env.ACP_PRIVATE_KEY;
         if (!SWAP_PRIVATE_KEY) {
             return {
                 success: false,
-                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY or WALLET_PRIVATE_KEY must be set."
+                error: "Swap execution is not enabled. SWAP_EXECUTOR_PRIVATE_KEY, WALLET_PRIVATE_KEY, or ACP_PRIVATE_KEY must be set."
             };
         }
 
