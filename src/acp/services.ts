@@ -63,6 +63,7 @@ const ERC20_ABI = [
     'function balanceOf(address) view returns (uint256)',
     'function allowance(address owner, address spender) view returns (uint256)',
     'function approve(address spender, uint256 amount) returns (bool)',
+    'function transfer(address to, uint256 amount) returns (bool)',
 ];
 
 // OpenOcean API for Base chain aggregation (fallback)
@@ -1368,10 +1369,28 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
                             const amountOutHuman = ethers.formatUnits(cdpData.toAmount, decimalsOut);
                             const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
 
+                            // If recipient is different from taker, transfer the received tokens
+                            let finalTxHash = receipt!.hash;
+                            if (recipient.toLowerCase() !== wallet.address.toLowerCase()) {
+                                console.log(`[ExecuteSwap] Transferring ${amountOutHuman} ${symbolOut} to ${recipient}...`);
+                                try {
+                                    const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, wallet);
+                                    // Get actual received balance (may differ slightly from quote)
+                                    const receivedBalance = await tokenOutContract.balanceOf(wallet.address);
+                                    const transferTx = await tokenOutContract.getFunction('transfer')(recipient, receivedBalance);
+                                    const transferReceipt = await transferTx.wait();
+                                    console.log(`[ExecuteSwap] Transfer confirmed: ${transferReceipt.hash}`);
+                                    finalTxHash = transferReceipt.hash; // Use transfer tx as final
+                                } catch (transferErr: any) {
+                                    console.log(`[ExecuteSwap] Transfer failed: ${transferErr.message}`);
+                                    // Still return success for swap, but note transfer failed
+                                }
+                            }
+
                             return {
                                 success: true,
                                 data: {
-                                    txHash: receipt!.hash,
+                                    txHash: finalTxHash,
                                     actualOutput: amountOutHuman,
                                     executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
                                     sold: `${amountIn} ${symbolIn}`,
