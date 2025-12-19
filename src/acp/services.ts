@@ -1118,7 +1118,9 @@ function resolveTokenAddress(tokenInput: string): string | null {
 
 /**
  * Service 4: Execute DEX Swap (Premium)
- * Price: 0.1% of trade value (min $0.50 USDC)
+ * Price: 0.25% of trade value
+ *
+ * Uses CDP Swap API for best-price routing across multiple DEXs
  */
 export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<ExecuteSwapOutput> {
     try {
@@ -1159,33 +1161,161 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
             };
         }
 
-        // Parse slippage (default 0.5%)
-        const slippagePercent = parseFloat(slippage || '0.5');
+        // Parse slippage (default 1%)
+        const slippagePercent = parseFloat(slippage || '1');
         if (slippagePercent < 0.1 || slippagePercent > 50) {
             return {
                 success: false,
                 error: "Slippage must be between 0.1% and 50%"
             };
         }
+        const slippageBps = Math.floor(slippagePercent * 100);
 
         const provider = getProvider();
 
         // Create wallet signer
         const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
-        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
 
-        // Get token details
-        const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
-        const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, provider);
-        const decimalsIn = await tokenInContract.decimals();
-        const decimalsOut = await tokenOutContract.decimals();
-        const symbolIn = await tokenInContract.symbol();
-        const symbolOut = await tokenOutContract.symbol();
+        // Get token info
+        const tokenInInfo = await getTokenInfo(tokenInAddress, provider);
+        const tokenOutInfo = await getTokenInfo(tokenOutAddress, provider);
+        const decimalsIn = tokenInInfo.decimals;
+        const decimalsOut = tokenOutInfo.decimals;
+        const symbolIn = tokenInInfo.symbol;
+        const symbolOut = tokenOutInfo.symbol;
 
         // Convert amount to wei
         const amountInWei = ethers.parseUnits(amountIn, decimalsIn);
 
-        // Get quote first
+        // Recipient address
+        const recipient = walletAddress && isValidAddress(walletAddress)
+            ? walletAddress
+            : wallet.address;
+
+        console.log(`[ExecuteSwap] ${amountIn} ${symbolIn} -> ${symbolOut} for ${recipient}`);
+
+        // Try CDP Swap API first
+        if (CDP_API_KEY && CDP_API_SECRET) {
+            console.log(`[ExecuteSwap] Using CDP Swap API...`);
+            try {
+                const cdpJwt = generateCdpJwt('POST', '/platform/v2/evm/swaps');
+                if (cdpJwt) {
+                    // For execution, taker should be the wallet that holds the tokens and will sign
+                    // Use the signing wallet as taker (not the smart account)
+                    const takerAddress = wallet.address;
+
+                    const requestBody: Record<string, any> = {
+                        network: 'base',
+                        fromToken: tokenInAddress,
+                        toToken: tokenOutAddress,
+                        fromAmount: amountInWei.toString(),
+                        taker: takerAddress,
+                        slippageBps
+                    };
+                    // No signerAddress needed when taker is the EOA itself
+
+                    console.log('[ExecuteSwap] CDP request:', JSON.stringify(requestBody));
+
+                    const cdpResponse = await fetch(CDP_SWAP_API, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${cdpJwt}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    console.log(`[ExecuteSwap] CDP response status: ${cdpResponse.status}`);
+
+                    if (cdpResponse.ok) {
+                        const cdpData = await cdpResponse.json();
+                        console.log(`[ExecuteSwap] CDP data:`, JSON.stringify(cdpData).substring(0, 800));
+                        console.log(`[ExecuteSwap] Transaction:`, JSON.stringify(cdpData.transaction));
+                        console.log(`[ExecuteSwap] Permit2:`, cdpData.permit2 ? 'present' : 'none');
+
+                        if (cdpData.transaction && cdpData.toAmount) {
+                            // CDP returns the transaction to execute
+                            const tx = cdpData.transaction;
+
+                            // Check if we need to approve Permit2 first
+                            if (cdpData.issues?.allowance?.currentAllowance === '0') {
+                                const permit2Address = cdpData.issues.allowance.spender;
+                                console.log(`[ExecuteSwap] Approving Permit2 at ${permit2Address}...`);
+
+                                const tokenContract = new ethers.Contract(tokenInAddress, ERC20_ABI, wallet);
+                                const approveTx = await tokenContract.approve(permit2Address, ethers.MaxUint256);
+                                await approveTx.wait();
+                                console.log(`[ExecuteSwap] Permit2 approval confirmed: ${approveTx.hash}`);
+                            }
+
+                            // If there's a Permit2 signature required, sign it and append to tx data
+                            // Format: <original tx data><sig length as 32-byte big-endian><signature>
+                            let txData = tx.data;
+                            if (cdpData.permit2?.eip712) {
+                                console.log(`[ExecuteSwap] Signing Permit2 message...`);
+                                const { domain, types, message } = cdpData.permit2.eip712;
+                                // Remove EIP712Domain from types as ethers adds it automatically
+                                delete types.EIP712Domain;
+                                const signature = await wallet.signTypedData(domain, types, message);
+                                console.log(`[ExecuteSwap] Permit2 signed: ${signature.substring(0, 20)}...`);
+
+                                // Append signature with 32-byte length prefix (per 0x/Permit2 spec)
+                                // The signature is 65 bytes (0x + 130 hex chars)
+                                const sigBytes = signature.slice(2); // Remove 0x prefix
+                                const sigLength = sigBytes.length / 2; // Convert hex length to byte length
+                                // Create 32-byte big-endian length prefix
+                                const lengthHex = sigLength.toString(16).padStart(64, '0');
+                                txData = tx.data + lengthHex + sigBytes;
+                                console.log(`[ExecuteSwap] Appended sig (${sigLength} bytes) with length prefix`);
+                            }
+
+                            // Execute the swap transaction
+                            console.log(`[ExecuteSwap] Sending transaction to ${tx.to}...`);
+                            const swapTx = await wallet.sendTransaction({
+                                to: tx.to,
+                                data: txData,
+                                value: tx.value || '0',
+                                gasLimit: tx.gas ? BigInt(tx.gas) * BigInt(120) / BigInt(100) : undefined // Add 20% buffer
+                            });
+
+                            console.log(`[ExecuteSwap] Transaction sent: ${swapTx.hash}`);
+                            const receipt = await swapTx.wait();
+                            console.log(`[ExecuteSwap] Transaction confirmed!`);
+
+                            const amountOutHuman = ethers.formatUnits(cdpData.toAmount, decimalsOut);
+                            const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
+
+                            return {
+                                success: true,
+                                data: {
+                                    txHash: receipt!.hash,
+                                    actualOutput: amountOutHuman,
+                                    executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
+                                    sold: `${amountIn} ${symbolIn}`,
+                                    received: `${amountOutHuman} ${symbolOut}`,
+                                    recipient: recipient,
+                                    gasUsed: receipt!.gasUsed.toString(),
+                                    chain: 'Base',
+                                    router: tx.to,
+                                    timestamp: new Date().toISOString()
+                                }
+                            };
+                        }
+                    } else {
+                        const errorText = await cdpResponse.text();
+                        console.log(`[ExecuteSwap] CDP error:`, errorText.substring(0, 300));
+                    }
+                }
+            } catch (cdpError: any) {
+                console.log('[ExecuteSwap] CDP error:', cdpError.message);
+            }
+        }
+
+        // Fallback to direct Silverback router
+        console.log(`[ExecuteSwap] Falling back to Silverback router...`);
+        const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
+
+        // Get quote from router
         const path = [tokenInAddress, tokenOutAddress];
         const amounts = await router.getAmountsOut(amountInWei, path);
         const expectedOut = amounts[1];
@@ -1197,26 +1327,22 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
         // Set deadline (20 minutes from now)
         const deadline = Math.floor(Date.now() / 1000) + 1200;
 
-        // Recipient address (use provided wallet or executor wallet)
-        const recipient = walletAddress && isValidAddress(walletAddress)
-            ? walletAddress
-            : wallet.address;
-
         // Check allowance and approve if needed
+        const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
         const allowance = await tokenInContract.allowance(wallet.address, SILVERBACK_UNIFIED_ROUTER) as bigint;
         if (allowance < amountInWei) {
-            console.log(`Approving ${symbolIn} for router...`);
+            console.log(`[ExecuteSwap] Approving ${symbolIn} for router...`);
             const tokenInWithSigner = new ethers.Contract(tokenInAddress, ERC20_ABI, wallet);
             const approveTx = await tokenInWithSigner.getFunction('approve')(
                 SILVERBACK_UNIFIED_ROUTER,
                 ethers.MaxUint256
             );
             await approveTx.wait();
-            console.log(`Approval confirmed: ${approveTx.hash}`);
+            console.log(`[ExecuteSwap] Approval confirmed: ${approveTx.hash}`);
         }
 
         // Execute the swap
-        console.log(`Executing swap: ${amountIn} ${symbolIn} -> ${symbolOut}`);
+        console.log(`[ExecuteSwap] Executing via Silverback: ${amountIn} ${symbolIn} -> ${symbolOut}`);
         const routerSigner = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, wallet);
         const tx = await routerSigner.getFunction('swapExactTokensForTokens')(
             amountInWei,
