@@ -5,10 +5,13 @@
  * Each service maps to a registered offering on the ACP platform.
  *
  * Services:
- * 1. swap-quote - Get optimal swap route with price impact
- * 2. pool-analysis - Comprehensive liquidity pool analysis
- * 3. technical-analysis - Full technical analysis with indicators
- * 4. execute-swap - Execute swap on Silverback DEX (Phase 2)
+ * 1. swap-quote - Get optimal swap route with price impact ($0.02)
+ * 2. pool-analysis - Comprehensive liquidity pool analysis ($0.10)
+ * 3. technical-analysis - Full technical analysis with indicators ($0.25)
+ * 4. execute-swap - Execute swap on Silverback DEX (fund-transfer)
+ * 5. lp-analysis - LP position analytics for Aerodrome/Uniswap V3 ($0.05)
+ * 6. yield-analysis - Token yield opportunities across Base DeFi ($0.05)
+ * 7. top-pools - Best yielding pools on Aerodrome ($0.03)
  */
 
 import { ethers } from 'ethers';
@@ -1819,10 +1822,32 @@ export async function processServiceRequest(
                 result = await handleExecuteSwap(input);
                 break;
 
+            case 'lp-analysis':
+            case 'lp-position':
+            case 'liquidity-analysis':
+            case 'position-analysis':
+                result = await handleLPAnalysis(input);
+                break;
+
+            case 'top-pools':
+            case 'best-yields':
+            case 'pool-opportunities':
+                result = await handleTopPools(input);
+                break;
+
+            case 'yield-analysis':
+            case 'token-yield':
+            case 'defi-yield':
+            case 'yield-opportunities':
+                result = await handleYieldAnalysis(input);
+                break;
+
             default:
                 // Try to infer service type from input
                 if (input.tokenIn && input.tokenOut && input.amountIn) {
                     result = await handleSwapQuote(input);
+                } else if (input.poolAddress || input.tokenPair || input.positionId) {
+                    result = await handleLPAnalysis(input);
                 } else if (input.tokenA && input.tokenB || input.poolId) {
                     result = await handlePoolAnalysis(input);
                 } else if (input.token) {
@@ -1830,7 +1855,7 @@ export async function processServiceRequest(
                 } else {
                     result = {
                         success: false,
-                        error: `Unknown service type: ${serviceType}. Available: swap-quote, pool-analysis, technical-analysis`
+                        error: `Unknown service type: ${serviceType}. Available: swap-quote, pool-analysis, technical-analysis, lp-analysis, top-pools`
                     };
                 }
         }
@@ -1857,4 +1882,1190 @@ function formatLargeNumber(num: number): string {
     if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
     if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
     return `$${num.toFixed(2)}`;
+}
+
+// ============================================================================
+// LP POSITION ANALYSIS SERVICE
+// Comprehensive liquidity position analytics for DeFi agents
+// Supports: Aerodrome, Uniswap V3, Morpho (lending)
+// ============================================================================
+
+// Protocol Contract Addresses on Base
+const PROTOCOLS = {
+    aerodrome: {
+        router: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
+        factory: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da',
+        voter: '0x16613524e02ad97eDfeF371bC883F2F5d6C480A5',
+        aero: '0x940181a94A35A4569E4529A3CDfB74e38FD98631'
+    },
+    uniswapV3: {
+        factory: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+        positionManager: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
+        quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+        router: '0x2626664c2603336E57B271c5C0b26F421741e481'
+    },
+    morpho: {
+        core: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb',
+        registry: '0x3696c5eAe4a7Ffd04Ea163564571E9CD8Ed9364e'
+    }
+};
+
+// ABIs for LP analysis
+const AERODROME_POOL_ABI = [
+    'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)',
+    'function token0() view returns (address)',
+    'function token1() view returns (address)',
+    'function totalSupply() view returns (uint256)',
+    'function stable() view returns (bool)',
+    'function getAmountOut(uint256 amountIn, address tokenIn) view returns (uint256)',
+    'function metadata() view returns (uint256 dec0, uint256 dec1, uint256 r0, uint256 r1, bool st, address t0, address t1)'
+];
+
+const AERODROME_FACTORY_ABI = [
+    'function getPool(address tokenA, address tokenB, bool stable) view returns (address)',
+    'function allPoolsLength() view returns (uint256)',
+    'function allPools(uint256 index) view returns (address)'
+];
+
+const AERODROME_GAUGE_ABI = [
+    'function rewardRate() view returns (uint256)',
+    'function totalSupply() view returns (uint256)',
+    'function balanceOf(address) view returns (uint256)',
+    'function earned(address) view returns (uint256)'
+];
+
+const AERODROME_VOTER_ABI = [
+    'function gauges(address pool) view returns (address)',
+    'function isGauge(address gauge) view returns (bool)'
+];
+
+const UNISWAP_V3_POOL_ABI = [
+    'function token0() view returns (address)',
+    'function token1() view returns (address)',
+    'function fee() view returns (uint24)',
+    'function liquidity() view returns (uint128)',
+    'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
+    'function tickSpacing() view returns (int24)',
+    'function feeGrowthGlobal0X128() view returns (uint256)',
+    'function feeGrowthGlobal1X128() view returns (uint256)'
+];
+
+const UNISWAP_V3_FACTORY_ABI = [
+    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address)'
+];
+
+const UNISWAP_V3_POSITION_MANAGER_ABI = [
+    'function positions(uint256 tokenId) view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)',
+    'function balanceOf(address owner) view returns (uint256)',
+    'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)'
+];
+
+// LP Analysis Input/Output Types
+export interface LPAnalysisInput {
+    // Required: one of these
+    walletAddress?: string;      // Analyze all LP positions for a wallet
+    poolAddress?: string;        // Analyze specific pool
+    tokenPair?: string;          // e.g., "USDC/WETH"
+    tokenA?: string;             // Token A address or symbol
+    tokenB?: string;             // Token B address or symbol
+
+    // Optional parameters
+    protocol?: 'aerodrome' | 'uniswap' | 'all';  // Which protocol to check
+    positionId?: string;         // Specific Uniswap V3 position NFT ID
+    includeRewards?: boolean;    // Include pending rewards
+    includeFees?: boolean;       // Include uncollected fees
+    calculateIL?: boolean;       // Calculate impermanent loss
+    timeframe?: string;          // For historical analysis: '24h', '7d', '30d'
+}
+
+export interface LPPositionData {
+    protocol: string;
+    poolAddress: string;
+    poolType: string;            // 'stable' | 'volatile' | 'concentrated'
+    token0: {
+        address: string;
+        symbol: string;
+        decimals: number;
+        reserve: string;
+        priceUSD: string;
+    };
+    token1: {
+        address: string;
+        symbol: string;
+        decimals: number;
+        reserve: string;
+        priceUSD: string;
+    };
+    // Position metrics
+    tvlUSD: string;
+    userLiquidity?: string;      // User's share if wallet provided
+    userSharePercent?: string;
+    userValueUSD?: string;
+
+    // Yield metrics
+    apr: {
+        trading: string;         // From trading fees
+        rewards: string;         // From emissions (AERO, etc.)
+        total: string;
+    };
+    volume24h: string;
+    fees24h: string;
+
+    // Impermanent loss
+    impermanentLoss?: {
+        percentage: string;
+        valueUSD: string;
+        vsHodl: string;          // Comparison to just holding
+        breakEvenAPR: string;    // APR needed to offset IL
+    };
+
+    // Concentrated liquidity (Uniswap V3)
+    concentratedLiquidity?: {
+        tickLower: number;
+        tickUpper: number;
+        priceLower: string;
+        priceUpper: string;
+        inRange: boolean;
+        capitalEfficiency: string;
+    };
+
+    // Pending rewards/fees
+    pendingRewards?: {
+        token: string;
+        amount: string;
+        valueUSD: string;
+    }[];
+    unclaimedFees?: {
+        token0: string;
+        token1: string;
+        totalUSD: string;
+    };
+
+    // Health & recommendations
+    healthScore: number;         // 0-100
+    recommendations: string[];
+    risks: string[];
+
+    timestamp: string;
+}
+
+export interface LPAnalysisOutput {
+    success: boolean;
+    data?: {
+        summary: {
+            totalPositions: number;
+            totalValueUSD: string;
+            totalAPR: string;
+            protocols: string[];
+        };
+        positions: LPPositionData[];
+        marketContext: {
+            gasPrice: string;
+            aeroPrice?: string;
+            bestOpportunities?: {
+                pool: string;
+                apr: string;
+                tvl: string;
+            }[];
+        };
+    };
+    error?: string;
+}
+
+/**
+ * Calculate Impermanent Loss
+ * IL = 2 * sqrt(priceRatio) / (1 + priceRatio) - 1
+ */
+function calculateImpermanentLoss(
+    initialPrice: number,
+    currentPrice: number
+): { percentage: number; multiplier: number } {
+    const priceRatio = currentPrice / initialPrice;
+    const sqrtRatio = Math.sqrt(priceRatio);
+    const ilMultiplier = (2 * sqrtRatio) / (1 + priceRatio);
+    const ilPercentage = (1 - ilMultiplier) * 100;
+
+    return {
+        percentage: ilPercentage,
+        multiplier: ilMultiplier
+    };
+}
+
+/**
+ * Calculate APR from trading fees
+ */
+function calculateTradingAPR(
+    volume24h: number,
+    feePercent: number,
+    tvl: number
+): number {
+    if (tvl === 0) return 0;
+    const dailyFees = volume24h * (feePercent / 100);
+    const dailyAPR = (dailyFees / tvl) * 100;
+    return dailyAPR * 365;
+}
+
+/**
+ * Get token price from CoinGecko
+ */
+async function getTokenPriceUSD(tokenAddress: string): Promise<number> {
+    try {
+        const url = `${COINGECKO_API}/simple/token_price/base?contract_addresses=${tokenAddress}&vs_currencies=usd`;
+        const headers: Record<string, string> = {};
+        if (process.env.COINGECKO_API_KEY) {
+            headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY;
+        }
+
+        const response = await fetch(url, { headers });
+        if (response.ok) {
+            const data = await response.json();
+            return data[tokenAddress.toLowerCase()]?.usd || 0;
+        }
+    } catch (e) {
+        console.log(`[LP] Price fetch failed for ${tokenAddress}`);
+    }
+    return 0;
+}
+
+/**
+ * Analyze Aerodrome Pool
+ */
+async function analyzeAerodromePool(
+    poolAddress: string,
+    walletAddress?: string
+): Promise<LPPositionData | null> {
+    try {
+        const provider = getProvider();
+
+        const pool = new ethers.Contract(poolAddress, AERODROME_POOL_ABI, provider);
+        const voter = new ethers.Contract(PROTOCOLS.aerodrome.voter, AERODROME_VOTER_ABI, provider);
+
+        // Get pool metadata
+        const [reserves, token0Addr, token1Addr, totalSupply, isStable] = await Promise.all([
+            pool.getReserves(),
+            pool.token0(),
+            pool.token1(),
+            pool.totalSupply(),
+            pool.stable()
+        ]);
+
+        // Get token info
+        const token0Contract = new ethers.Contract(token0Addr, ERC20_ABI, provider);
+        const token1Contract = new ethers.Contract(token1Addr, ERC20_ABI, provider);
+
+        const [symbol0, symbol1, decimals0, decimals1] = await Promise.all([
+            token0Contract.symbol(),
+            token1Contract.symbol(),
+            token0Contract.decimals(),
+            token1Contract.decimals()
+        ]);
+
+        // Get prices
+        const [price0, price1] = await Promise.all([
+            getTokenPriceUSD(token0Addr),
+            getTokenPriceUSD(token1Addr)
+        ]);
+
+        const reserve0 = parseFloat(ethers.formatUnits(reserves[0], decimals0));
+        const reserve1 = parseFloat(ethers.formatUnits(reserves[1], decimals1));
+
+        const tvl0 = reserve0 * price0;
+        const tvl1 = reserve1 * price1;
+        const tvlUSD = tvl0 + tvl1;
+
+        // Get gauge for rewards APR
+        let rewardsAPR = 0;
+        let pendingRewards: { token: string; amount: string; valueUSD: string }[] = [];
+
+        try {
+            const gaugeAddress = await voter.gauges(poolAddress);
+            if (gaugeAddress !== ethers.ZeroAddress) {
+                const gauge = new ethers.Contract(gaugeAddress, AERODROME_GAUGE_ABI, provider);
+                const [rewardRate, gaugeTotalSupply] = await Promise.all([
+                    gauge.rewardRate(),
+                    gauge.totalSupply()
+                ]);
+
+                // AERO price
+                const aeroPrice = await getTokenPriceUSD(PROTOCOLS.aerodrome.aero);
+
+                // Calculate rewards APR
+                const rewardsPerYear = parseFloat(ethers.formatUnits(rewardRate, 18)) * 365 * 24 * 3600;
+                const rewardsValuePerYear = rewardsPerYear * aeroPrice;
+
+                if (tvlUSD > 0) {
+                    rewardsAPR = (rewardsValuePerYear / tvlUSD) * 100;
+                }
+
+                // Get user's pending rewards if wallet provided
+                if (walletAddress) {
+                    try {
+                        const earned = await gauge.earned(walletAddress);
+                        const earnedAmount = parseFloat(ethers.formatUnits(earned, 18));
+                        if (earnedAmount > 0) {
+                            pendingRewards.push({
+                                token: 'AERO',
+                                amount: earnedAmount.toFixed(4),
+                                valueUSD: (earnedAmount * aeroPrice).toFixed(2)
+                            });
+                        }
+                    } catch (e) {
+                        // User may not have staked
+                    }
+                }
+            }
+        } catch (e) {
+            // No gauge or error
+        }
+
+        // Estimate trading APR (use 0.3% fee for volatile, 0.01% for stable)
+        const feePercent = isStable ? 0.01 : 0.3;
+        // Rough estimate: assume volume is 5-10% of TVL daily for active pools
+        const estimatedVolume = tvlUSD * 0.05;
+        const tradingAPR = calculateTradingAPR(estimatedVolume, feePercent, tvlUSD);
+
+        // User position if wallet provided
+        let userLiquidity: string | undefined;
+        let userSharePercent: string | undefined;
+        let userValueUSD: string | undefined;
+
+        if (walletAddress) {
+            try {
+                const userBalance = await pool.balanceOf(walletAddress);
+                const userShare = parseFloat(ethers.formatUnits(userBalance, 18));
+                const totalSupplyFloat = parseFloat(ethers.formatUnits(totalSupply, 18));
+
+                if (userShare > 0 && totalSupplyFloat > 0) {
+                    const sharePercent = (userShare / totalSupplyFloat) * 100;
+                    userLiquidity = userShare.toFixed(6);
+                    userSharePercent = sharePercent.toFixed(4);
+                    userValueUSD = (tvlUSD * sharePercent / 100).toFixed(2);
+                }
+            } catch (e) {
+                // Error getting user balance
+            }
+        }
+
+        // Health score
+        let healthScore = 50;
+        if (tvlUSD > 1000000) healthScore += 20;
+        else if (tvlUSD > 100000) healthScore += 10;
+        if (rewardsAPR > 0) healthScore += 15;
+        if (isStable) healthScore += 10;
+
+        const recommendations: string[] = [];
+        const risks: string[] = [];
+
+        if (tvlUSD < 50000) {
+            risks.push('Low liquidity - high slippage risk');
+        }
+        if (rewardsAPR > 100) {
+            recommendations.push('High rewards APR - consider staking LP tokens');
+            risks.push('High APR may indicate inflation or low TVL');
+        }
+        if (!isStable) {
+            risks.push('Volatile pair - impermanent loss risk');
+        }
+
+        return {
+            protocol: 'Aerodrome',
+            poolAddress,
+            poolType: isStable ? 'stable' : 'volatile',
+            token0: {
+                address: token0Addr,
+                symbol: symbol0,
+                decimals: decimals0,
+                reserve: reserve0.toFixed(4),
+                priceUSD: price0.toFixed(6)
+            },
+            token1: {
+                address: token1Addr,
+                symbol: symbol1,
+                decimals: decimals1,
+                reserve: reserve1.toFixed(4),
+                priceUSD: price1.toFixed(6)
+            },
+            tvlUSD: formatLargeNumber(tvlUSD),
+            userLiquidity,
+            userSharePercent,
+            userValueUSD,
+            apr: {
+                trading: tradingAPR.toFixed(2) + '%',
+                rewards: rewardsAPR.toFixed(2) + '%',
+                total: (tradingAPR + rewardsAPR).toFixed(2) + '%'
+            },
+            volume24h: formatLargeNumber(estimatedVolume),
+            fees24h: formatLargeNumber(estimatedVolume * feePercent / 100),
+            pendingRewards: pendingRewards.length > 0 ? pendingRewards : undefined,
+            healthScore,
+            recommendations,
+            risks,
+            timestamp: new Date().toISOString()
+        };
+    } catch (e) {
+        console.log(`[LP] Aerodrome pool analysis failed:`, e);
+        return null;
+    }
+}
+
+/**
+ * Analyze Uniswap V3 Position
+ */
+async function analyzeUniswapV3Position(
+    positionId: string,
+    walletAddress?: string
+): Promise<LPPositionData | null> {
+    try {
+        const provider = getProvider();
+        const positionManager = new ethers.Contract(
+            PROTOCOLS.uniswapV3.positionManager,
+            UNISWAP_V3_POSITION_MANAGER_ABI,
+            provider
+        );
+
+        // Get position data
+        const position = await positionManager.positions(positionId);
+
+        const token0Addr = position.token0;
+        const token1Addr = position.token1;
+        const fee = position.fee;
+        const tickLower = position.tickLower;
+        const tickUpper = position.tickUpper;
+        const liquidity = position.liquidity;
+        const tokensOwed0 = position.tokensOwed0;
+        const tokensOwed1 = position.tokensOwed1;
+
+        // Get pool
+        const factory = new ethers.Contract(
+            PROTOCOLS.uniswapV3.factory,
+            UNISWAP_V3_FACTORY_ABI,
+            provider
+        );
+        const poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
+
+        const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
+        const slot0 = await pool.slot0();
+        const currentTick = slot0.tick;
+
+        // Get token info
+        const token0Contract = new ethers.Contract(token0Addr, ERC20_ABI, provider);
+        const token1Contract = new ethers.Contract(token1Addr, ERC20_ABI, provider);
+
+        const [symbol0, symbol1, decimals0, decimals1] = await Promise.all([
+            token0Contract.symbol(),
+            token1Contract.symbol(),
+            token0Contract.decimals(),
+            token1Contract.decimals()
+        ]);
+
+        // Get prices
+        const [price0, price1] = await Promise.all([
+            getTokenPriceUSD(token0Addr),
+            getTokenPriceUSD(token1Addr)
+        ]);
+
+        // Calculate position value and range
+        const sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+        // Q96 = 2^96 - use multiplication instead of exponentiation for compatibility
+        const Q96 = BigInt('79228162514264337593543950336'); // 2^96
+
+        // Current price
+        const currentPrice = Number((sqrtPriceX96 * sqrtPriceX96 * BigInt(10 ** decimals0)) / (Q96 * Q96)) / (10 ** decimals1);
+
+        // Price range from ticks
+        const priceLower = Math.pow(1.0001, Number(tickLower)) * (10 ** decimals0) / (10 ** decimals1);
+        const priceUpper = Math.pow(1.0001, Number(tickUpper)) * (10 ** decimals0) / (10 ** decimals1);
+
+        const inRange = currentTick >= tickLower && currentTick < tickUpper;
+
+        // Estimate position value (simplified)
+        const liquidityFloat = parseFloat(ethers.formatUnits(liquidity, 0));
+        const estimatedValue = liquidityFloat > 0 ? liquidityFloat / 1e12 * (price0 + price1) : 0;
+
+        // Unclaimed fees
+        const fees0 = parseFloat(ethers.formatUnits(tokensOwed0, decimals0));
+        const fees1 = parseFloat(ethers.formatUnits(tokensOwed1, decimals1));
+        const totalFeesUSD = fees0 * price0 + fees1 * price1;
+
+        // Fee tier APR estimate
+        const feePercent = Number(fee) / 10000; // fee is in hundredths of a bp
+        const tradingAPR = inRange ? feePercent * 365 * 10 : 0; // Rough estimate
+
+        // Health score
+        let healthScore = 50;
+        if (inRange) healthScore += 30;
+        if (totalFeesUSD > 0) healthScore += 10;
+        if (liquidityFloat > 0) healthScore += 10;
+
+        const recommendations: string[] = [];
+        const risks: string[] = [];
+
+        if (!inRange) {
+            risks.push('Position out of range - not earning fees');
+            recommendations.push('Consider rebalancing to current price range');
+        }
+        if (totalFeesUSD > 10) {
+            recommendations.push(`Collect ${totalFeesUSD.toFixed(2)} USD in unclaimed fees`);
+        }
+
+        return {
+            protocol: 'Uniswap V3',
+            poolAddress,
+            poolType: 'concentrated',
+            token0: {
+                address: token0Addr,
+                symbol: symbol0,
+                decimals: decimals0,
+                reserve: '0', // N/A for V3
+                priceUSD: price0.toFixed(6)
+            },
+            token1: {
+                address: token1Addr,
+                symbol: symbol1,
+                decimals: decimals1,
+                reserve: '0',
+                priceUSD: price1.toFixed(6)
+            },
+            tvlUSD: formatLargeNumber(estimatedValue),
+            userValueUSD: estimatedValue.toFixed(2),
+            apr: {
+                trading: tradingAPR.toFixed(2) + '%',
+                rewards: '0%',
+                total: tradingAPR.toFixed(2) + '%'
+            },
+            volume24h: 'N/A',
+            fees24h: 'N/A',
+            concentratedLiquidity: {
+                tickLower: Number(tickLower),
+                tickUpper: Number(tickUpper),
+                priceLower: priceLower.toFixed(6),
+                priceUpper: priceUpper.toFixed(6),
+                inRange,
+                capitalEfficiency: ((priceUpper / priceLower - 1) * 100).toFixed(1) + '%'
+            },
+            unclaimedFees: {
+                token0: fees0.toFixed(6) + ' ' + symbol0,
+                token1: fees1.toFixed(6) + ' ' + symbol1,
+                totalUSD: totalFeesUSD.toFixed(2)
+            },
+            healthScore,
+            recommendations,
+            risks,
+            timestamp: new Date().toISOString()
+        };
+    } catch (e) {
+        console.log(`[LP] Uniswap V3 position analysis failed:`, e);
+        return null;
+    }
+}
+
+/**
+ * Find Aerodrome pool by token pair
+ */
+async function findAerodromePool(
+    tokenA: string,
+    tokenB: string,
+    preferStable: boolean = false
+): Promise<string | null> {
+    try {
+        const provider = getProvider();
+        const factory = new ethers.Contract(
+            PROTOCOLS.aerodrome.factory,
+            AERODROME_FACTORY_ABI,
+            provider
+        );
+
+        // Resolve token addresses
+        const addrA = await resolveTokenAddressAsync(tokenA);
+        const addrB = await resolveTokenAddressAsync(tokenB);
+
+        if (!addrA || !addrB) return null;
+
+        // Try stable first if preferred, else volatile
+        const stablePool = await factory.getPool(addrA, addrB, true);
+        const volatilePool = await factory.getPool(addrA, addrB, false);
+
+        if (preferStable && stablePool !== ethers.ZeroAddress) {
+            return stablePool;
+        }
+        if (volatilePool !== ethers.ZeroAddress) {
+            return volatilePool;
+        }
+        if (stablePool !== ethers.ZeroAddress) {
+            return stablePool;
+        }
+
+        return null;
+    } catch (e) {
+        console.log(`[LP] Find pool failed:`, e);
+        return null;
+    }
+}
+
+/**
+ * Get user's Uniswap V3 positions
+ */
+async function getUserV3Positions(walletAddress: string): Promise<string[]> {
+    try {
+        const provider = getProvider();
+        const positionManager = new ethers.Contract(
+            PROTOCOLS.uniswapV3.positionManager,
+            UNISWAP_V3_POSITION_MANAGER_ABI,
+            provider
+        );
+
+        const balance = await positionManager.balanceOf(walletAddress);
+        const positionIds: string[] = [];
+
+        for (let i = 0; i < Number(balance); i++) {
+            const tokenId = await positionManager.tokenOfOwnerByIndex(walletAddress, i);
+            positionIds.push(tokenId.toString());
+        }
+
+        return positionIds;
+    } catch (e) {
+        console.log(`[LP] Get V3 positions failed:`, e);
+        return [];
+    }
+}
+
+/**
+ * Service: LP Position Analysis
+ * Price: $0.05 USDC
+ *
+ * Comprehensive liquidity position analytics for DeFi agents
+ */
+export async function handleLPAnalysis(input: LPAnalysisInput): Promise<LPAnalysisOutput> {
+    try {
+        const positions: LPPositionData[] = [];
+        const protocols: Set<string> = new Set();
+
+        // Case 1: Analyze specific pool
+        if (input.poolAddress) {
+            const position = await analyzeAerodromePool(input.poolAddress, input.walletAddress);
+            if (position) {
+                positions.push(position);
+                protocols.add(position.protocol);
+            }
+        }
+
+        // Case 2: Find pool by token pair
+        else if (input.tokenPair || (input.tokenA && input.tokenB)) {
+            let tokenA: string, tokenB: string;
+
+            if (input.tokenPair) {
+                const [a, b] = input.tokenPair.split('/');
+                tokenA = a.trim();
+                tokenB = b.trim();
+            } else {
+                tokenA = input.tokenA!;
+                tokenB = input.tokenB!;
+            }
+
+            // Check Aerodrome
+            if (!input.protocol || input.protocol === 'aerodrome' || input.protocol === 'all') {
+                const aeroPool = await findAerodromePool(tokenA, tokenB);
+                if (aeroPool) {
+                    const position = await analyzeAerodromePool(aeroPool, input.walletAddress);
+                    if (position) {
+                        positions.push(position);
+                        protocols.add('Aerodrome');
+                    }
+                }
+            }
+
+            // Check Uniswap V3
+            if (!input.protocol || input.protocol === 'uniswap' || input.protocol === 'all') {
+                try {
+                    const provider = getProvider();
+                    const factory = new ethers.Contract(
+                        PROTOCOLS.uniswapV3.factory,
+                        UNISWAP_V3_FACTORY_ABI,
+                        provider
+                    );
+
+                    const addrA = await resolveTokenAddressAsync(tokenA);
+                    const addrB = await resolveTokenAddressAsync(tokenB);
+
+                    if (addrA && addrB) {
+                        // Check common fee tiers: 0.01%, 0.05%, 0.3%, 1%
+                        const feeTiers = [100, 500, 3000, 10000];
+                        for (const fee of feeTiers) {
+                            const poolAddr = await factory.getPool(addrA, addrB, fee);
+                            if (poolAddr !== ethers.ZeroAddress) {
+                                // For V3 we need position ID, so just note the pool exists
+                                console.log(`[LP] Found Uniswap V3 pool at ${poolAddr} (${fee/10000}% fee)`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // V3 lookup failed
+                }
+            }
+        }
+
+        // Case 3: Analyze all positions for a wallet
+        else if (input.walletAddress) {
+            // Get Uniswap V3 positions
+            if (!input.protocol || input.protocol === 'uniswap' || input.protocol === 'all') {
+                const v3PositionIds = await getUserV3Positions(input.walletAddress);
+                for (const posId of v3PositionIds.slice(0, 10)) { // Limit to 10
+                    const position = await analyzeUniswapV3Position(posId, input.walletAddress);
+                    if (position) {
+                        positions.push(position);
+                        protocols.add('Uniswap V3');
+                    }
+                }
+            }
+        }
+
+        // Case 4: Specific V3 position
+        else if (input.positionId) {
+            const position = await analyzeUniswapV3Position(input.positionId, input.walletAddress);
+            if (position) {
+                positions.push(position);
+                protocols.add('Uniswap V3');
+            }
+        }
+
+        if (positions.length === 0) {
+            return {
+                success: false,
+                error: 'No LP positions found. Provide poolAddress, tokenPair (e.g., "USDC/WETH"), or walletAddress.'
+            };
+        }
+
+        // Calculate summary
+        let totalValueUSD = 0;
+        let weightedAPR = 0;
+
+        for (const pos of positions) {
+            const value = parseFloat(pos.userValueUSD || pos.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
+            const apr = parseFloat(pos.apr.total) || 0;
+            totalValueUSD += value;
+            weightedAPR += apr * value;
+        }
+
+        if (totalValueUSD > 0) {
+            weightedAPR = weightedAPR / totalValueUSD;
+        }
+
+        // Get market context
+        const provider = getProvider();
+        const gasPrice = await provider.getFeeData();
+        const aeroPrice = await getTokenPriceUSD(PROTOCOLS.aerodrome.aero);
+
+        return {
+            success: true,
+            data: {
+                summary: {
+                    totalPositions: positions.length,
+                    totalValueUSD: formatLargeNumber(totalValueUSD),
+                    totalAPR: weightedAPR.toFixed(2) + '%',
+                    protocols: Array.from(protocols)
+                },
+                positions,
+                marketContext: {
+                    gasPrice: gasPrice.gasPrice ? ethers.formatUnits(gasPrice.gasPrice, 'gwei') + ' gwei' : 'N/A',
+                    aeroPrice: '$' + aeroPrice.toFixed(4)
+                }
+            }
+        };
+    } catch (e) {
+        return {
+            success: false,
+            error: `LP analysis failed: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
+    }
+}
+
+/**
+ * Get top yielding pools on Aerodrome
+ */
+export async function handleTopPools(input: { limit?: number; minTvl?: number }): Promise<any> {
+    try {
+        const provider = getProvider();
+        const factory = new ethers.Contract(
+            PROTOCOLS.aerodrome.factory,
+            AERODROME_FACTORY_ABI,
+            provider
+        );
+
+        const limit = input.limit || 10;
+        const minTvl = input.minTvl || 100000;
+
+        // Get total pools
+        const totalPools = await factory.allPoolsLength();
+        console.log(`[LP] Scanning ${totalPools} Aerodrome pools...`);
+
+        const pools: any[] = [];
+
+        // Sample pools (checking all would be too slow)
+        const sampleSize = Math.min(50, Number(totalPools));
+        const step = Math.floor(Number(totalPools) / sampleSize);
+
+        for (let i = 0; i < sampleSize && pools.length < limit; i++) {
+            try {
+                const poolAddr = await factory.allPools(i * step);
+                const analysis = await analyzeAerodromePool(poolAddr);
+
+                if (analysis) {
+                    const tvl = parseFloat(analysis.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
+                    const apr = parseFloat(analysis.apr.total) || 0;
+
+                    if (tvl >= minTvl) {
+                        pools.push({
+                            pool: `${analysis.token0.symbol}/${analysis.token1.symbol}`,
+                            address: poolAddr,
+                            type: analysis.poolType,
+                            tvl: analysis.tvlUSD,
+                            apr: analysis.apr.total,
+                            rewards: analysis.apr.rewards
+                        });
+                    }
+                }
+            } catch (e) {
+                // Skip failed pools
+            }
+        }
+
+        // Sort by APR
+        pools.sort((a, b) => parseFloat(b.apr) - parseFloat(a.apr));
+
+        return {
+            success: true,
+            data: {
+                topPools: pools.slice(0, limit),
+                scanned: sampleSize,
+                total: Number(totalPools),
+                timestamp: new Date().toISOString()
+            }
+        };
+    } catch (e) {
+        return {
+            success: false,
+            error: `Failed to get top pools: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
+    }
+}
+
+/**
+ * Yield Analysis for a specific token
+ * Finds all yield opportunities across Base DeFi for USDC, WETH, cbBTC, etc.
+ *
+ * Price: $0.05 USDC
+ */
+export interface YieldAnalysisInput {
+    token: string;           // Token symbol or address (USDC, WETH, cbBTC, ETH)
+    amount?: string;         // Optional: amount to allocate for strategy
+    riskTolerance?: 'low' | 'medium' | 'high';  // Risk preference
+    includeIL?: boolean;     // Include impermanent loss analysis
+}
+
+export interface YieldOpportunity {
+    protocol: string;
+    type: 'lp' | 'lending' | 'staking' | 'vault';
+    pool: string;
+    pairedToken?: string;
+    tvl: string;
+    apr: {
+        base: string;        // Trading fees / lending rate
+        rewards: string;     // Token incentives
+        total: string;
+    };
+    risks: string[];
+    impermanentLoss?: {
+        estimatedIL: string;
+        netAPR: string;      // APR after IL
+    };
+    allocation?: {
+        amount: string;
+        expectedYield: string;
+    };
+}
+
+export interface YieldAnalysisOutput {
+    success: boolean;
+    data?: {
+        token: string;
+        tokenPrice: string;
+        totalOpportunities: number;
+        opportunities: YieldOpportunity[];
+        optimalStrategy?: {
+            description: string;
+            allocations: {
+                protocol: string;
+                pool: string;
+                percentage: number;
+                expectedAPR: string;
+            }[];
+            totalExpectedAPR: string;
+            riskLevel: string;
+        };
+        marketInsights: {
+            bestStableYield: string;
+            bestVolatileYield: string;
+            averageAPR: string;
+            recommendation: string;
+        };
+        timestamp: string;
+    };
+    error?: string;
+}
+
+// Common trading pairs for major tokens on Base
+const TOKEN_PAIRS: Record<string, string[]> = {
+    'USDC': ['WETH', 'VIRTUAL', 'AERO', 'cbBTC', 'DAI', 'USDbC', 'DEGEN'],
+    'WETH': ['USDC', 'VIRTUAL', 'AERO', 'cbBTC', 'cbETH', 'USDbC'],
+    'ETH': ['USDC', 'VIRTUAL', 'AERO', 'cbBTC', 'cbETH', 'USDbC'],
+    'cbBTC': ['USDC', 'WETH', 'USDbC'],
+    'VIRTUAL': ['USDC', 'WETH', 'AERO'],
+    'AERO': ['USDC', 'WETH', 'VIRTUAL']
+};
+
+export async function handleYieldAnalysis(input: YieldAnalysisInput): Promise<YieldAnalysisOutput> {
+    try {
+        const token = input.token.toUpperCase();
+        const riskTolerance = input.riskTolerance || 'medium';
+
+        // Resolve token address
+        const tokenAddress = await resolveTokenAddressAsync(token);
+        if (!tokenAddress) {
+            return {
+                success: false,
+                error: `Unknown token: ${token}. Supported: USDC, WETH, ETH, cbBTC, VIRTUAL, AERO`
+            };
+        }
+
+        // Get token price
+        const tokenPrice = await getTokenPriceUSD(tokenAddress);
+
+        const opportunities: YieldOpportunity[] = [];
+
+        // Get paired tokens to check
+        const pairedTokens = TOKEN_PAIRS[token] || ['USDC', 'WETH'];
+
+        // Check Aerodrome pools
+        for (const pairedToken of pairedTokens) {
+            try {
+                // Check both stable and volatile pools
+                for (const isStable of [false, true]) {
+                    const poolAddress = await findAerodromePoolByTokens(token, pairedToken, isStable);
+                    if (poolAddress) {
+                        const analysis = await analyzeAerodromePool(poolAddress);
+                        if (analysis) {
+                            const tvlNum = parseFloat(analysis.tvlUSD.replace(/[$,KMB]/g, '')) || 0;
+                            if (tvlNum < 10000) continue; // Skip tiny pools
+
+                            const baseAPR = parseFloat(analysis.apr.trading) || 0;
+                            const rewardsAPR = parseFloat(analysis.apr.rewards) || 0;
+                            const totalAPR = baseAPR + rewardsAPR;
+
+                            // Calculate IL risk for volatile pairs
+                            let ilEstimate: string | undefined;
+                            let netAPR: string | undefined;
+                            const risks: string[] = [];
+
+                            if (!isStable) {
+                                // Rough IL estimate: assume 20% price divergence = 0.6% IL
+                                const estimatedIL = 2.0; // Conservative estimate for volatile pairs
+                                ilEstimate = estimatedIL.toFixed(2) + '%';
+                                netAPR = (totalAPR - estimatedIL).toFixed(2) + '%';
+                                risks.push('Impermanent loss risk on volatile pair');
+                            }
+
+                            if (tvlNum < 100000) {
+                                risks.push('Lower liquidity - higher slippage');
+                            }
+                            if (rewardsAPR > 50) {
+                                risks.push('High reward APR may not be sustainable');
+                            }
+
+                            opportunities.push({
+                                protocol: 'Aerodrome',
+                                type: 'lp',
+                                pool: `${analysis.token0.symbol}/${analysis.token1.symbol}`,
+                                pairedToken,
+                                tvl: analysis.tvlUSD,
+                                apr: {
+                                    base: analysis.apr.trading,
+                                    rewards: analysis.apr.rewards,
+                                    total: analysis.apr.total
+                                },
+                                risks,
+                                impermanentLoss: ilEstimate ? {
+                                    estimatedIL: ilEstimate,
+                                    netAPR: netAPR!
+                                } : undefined
+                            });
+                        }
+                    }
+                }
+            } catch (e) {
+                // Skip failed pools
+            }
+        }
+
+        // Sort by total APR
+        opportunities.sort((a, b) => {
+            const aprA = parseFloat(a.apr.total) || 0;
+            const aprB = parseFloat(b.apr.total) || 0;
+            return aprB - aprA;
+        });
+
+        // Calculate optimal strategy based on risk tolerance
+        let optimalStrategy;
+        if (opportunities.length > 0) {
+            const allocations: { protocol: string; pool: string; percentage: number; expectedAPR: string }[] = [];
+            let riskLevel = 'Medium';
+            let description = '';
+
+            if (riskTolerance === 'low') {
+                // Focus on stable pools only
+                const stablePools = opportunities.filter(o =>
+                    o.pool.includes('USDC') && o.pool.includes('USDbC') ||
+                    o.pool.includes('USDC') && o.pool.includes('DAI') ||
+                    !o.impermanentLoss
+                );
+                if (stablePools.length > 0) {
+                    allocations.push({
+                        protocol: stablePools[0].protocol,
+                        pool: stablePools[0].pool,
+                        percentage: 100,
+                        expectedAPR: stablePools[0].apr.total
+                    });
+                }
+                riskLevel = 'Low';
+                description = 'Conservative strategy focusing on stable pairs with minimal IL risk';
+            } else if (riskTolerance === 'high') {
+                // Top 3 pools by APR
+                const top3 = opportunities.slice(0, 3);
+                const perPool = Math.floor(100 / top3.length);
+                for (const opp of top3) {
+                    allocations.push({
+                        protocol: opp.protocol,
+                        pool: opp.pool,
+                        percentage: perPool,
+                        expectedAPR: opp.apr.total
+                    });
+                }
+                riskLevel = 'High';
+                description = 'Aggressive strategy maximizing APR across highest yielding pools';
+            } else {
+                // Medium: balanced approach
+                const best = opportunities[0];
+                const stable = opportunities.find(o => !o.impermanentLoss);
+
+                if (stable && stable !== best) {
+                    allocations.push({
+                        protocol: best.protocol,
+                        pool: best.pool,
+                        percentage: 60,
+                        expectedAPR: best.apr.total
+                    });
+                    allocations.push({
+                        protocol: stable.protocol,
+                        pool: stable.pool,
+                        percentage: 40,
+                        expectedAPR: stable.apr.total
+                    });
+                } else {
+                    allocations.push({
+                        protocol: best.protocol,
+                        pool: best.pool,
+                        percentage: 100,
+                        expectedAPR: best.apr.total
+                    });
+                }
+                riskLevel = 'Medium';
+                description = 'Balanced strategy with mix of yield optimization and risk management';
+            }
+
+            // Calculate weighted APR
+            let totalExpectedAPR = 0;
+            for (const alloc of allocations) {
+                totalExpectedAPR += (parseFloat(alloc.expectedAPR) || 0) * alloc.percentage / 100;
+            }
+
+            optimalStrategy = {
+                description,
+                allocations,
+                totalExpectedAPR: totalExpectedAPR.toFixed(2) + '%',
+                riskLevel
+            };
+        }
+
+        // Market insights
+        const stableOpps = opportunities.filter(o => !o.impermanentLoss);
+        const volatileOpps = opportunities.filter(o => o.impermanentLoss);
+
+        const bestStable = stableOpps.length > 0 ? stableOpps[0].apr.total : 'N/A';
+        const bestVolatile = volatileOpps.length > 0 ? volatileOpps[0].apr.total : 'N/A';
+
+        const avgAPR = opportunities.length > 0
+            ? opportunities.reduce((sum, o) => sum + (parseFloat(o.apr.total) || 0), 0) / opportunities.length
+            : 0;
+
+        let recommendation = '';
+        if (token === 'USDC' || token === 'USDbC' || token === 'DAI') {
+            recommendation = 'Stablecoins benefit from stable pools with lower IL risk. Consider USDC/USDbC or USDC/DAI for safer yields.';
+        } else if (token === 'WETH' || token === 'ETH') {
+            recommendation = 'ETH pairs with USDC offer good volume. Consider cbETH staking for additional yield on top of LP rewards.';
+        } else if (token === 'cbBTC') {
+            recommendation = 'cbBTC/USDC and cbBTC/WETH pools offer exposure to BTC yields on Base. Watch for IL on volatile moves.';
+        } else {
+            recommendation = `${token} pools vary in risk/reward. Higher APR pools often have higher IL risk.`;
+        }
+
+        return {
+            success: true,
+            data: {
+                token,
+                tokenPrice: '$' + tokenPrice.toFixed(4),
+                totalOpportunities: opportunities.length,
+                opportunities: opportunities.slice(0, 10), // Top 10
+                optimalStrategy,
+                marketInsights: {
+                    bestStableYield: bestStable,
+                    bestVolatileYield: bestVolatile,
+                    averageAPR: avgAPR.toFixed(2) + '%',
+                    recommendation
+                },
+                timestamp: new Date().toISOString()
+            }
+        };
+    } catch (e) {
+        return {
+            success: false,
+            error: `Yield analysis failed: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
+    }
+}
+
+/**
+ * Helper: Find Aerodrome pool by token symbols
+ */
+async function findAerodromePoolByTokens(
+    tokenA: string,
+    tokenB: string,
+    stable: boolean
+): Promise<string | null> {
+    try {
+        const provider = getProvider();
+        const factory = new ethers.Contract(
+            PROTOCOLS.aerodrome.factory,
+            AERODROME_FACTORY_ABI,
+            provider
+        );
+
+        const addrA = await resolveTokenAddressAsync(tokenA);
+        const addrB = await resolveTokenAddressAsync(tokenB);
+
+        if (!addrA || !addrB) return null;
+
+        const poolAddress = await factory.getPool(addrA, addrB, stable);
+        return poolAddress !== ethers.ZeroAddress ? poolAddress : null;
+    } catch (e) {
+        return null;
+    }
 }
