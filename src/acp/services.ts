@@ -1674,19 +1674,16 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
                             const amountOutHuman = ethers.formatUnits(cdpData.toAmount, decimalsOut);
                             const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
 
-                            // Now transfer the swapped tokens to the buyer
-                            const amountToTransfer = BigInt(cdpData.toAmount);
-                            console.log(`[ExecuteSwapWithFunds] Transferring ${amountOutHuman} ${symbolOut} to buyer ${recipientAddress}...`);
-
-                            const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, wallet);
-                            const transferTx = await tokenOutContract.getFunction('transfer')(recipientAddress, amountToTransfer);
-                            const transferReceipt = await transferTx.wait();
-                            console.log(`[ExecuteSwapWithFunds] Transfer confirmed: ${transferReceipt.hash}`);
+                            // DO NOT transfer manually - ACP's deliverPayable() handles the transfer
+                            // The swapped tokens stay in our wallet, and ACP will transfer them
+                            // when we call job.deliverPayable() in index.ts
+                            console.log(`[ExecuteSwapWithFunds] Swap complete. Output: ${amountOutHuman} ${symbolOut}`);
+                            console.log(`[ExecuteSwapWithFunds] Tokens held for ACP deliverPayable() transfer to ${recipientAddress}`);
 
                             return {
                                 success: true,
                                 data: {
-                                    txHash: transferReceipt.hash,
+                                    txHash: receipt!.hash,
                                     actualOutput: amountOutHuman,
                                     executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
                                     sold: `${amountIn} ${symbolIn}`,
