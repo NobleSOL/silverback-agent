@@ -342,24 +342,30 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
             try {
                 const cdpJwt = generateCdpJwt('POST', '/platform/v2/evm/swaps');
                 if (cdpJwt) {
-                    // Use a placeholder taker address for quote-only requests
-                    const takerAddress = process.env.WHITELISTED_WALLET_ADDRESS || '0x0000000000000000000000000000000000000001';
+                    // Use the agent wallet address as taker
+                    const takerAddress = process.env.ACP_AGENT_WALLET_ADDRESS || process.env.WHITELISTED_WALLET_ADDRESS;
 
-                    const cdpResponse = await fetch(CDP_SWAP_API, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${cdpJwt}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
+                    if (!takerAddress) {
+                        console.log('[SwapQuote] CDP: No taker address configured, skipping');
+                    } else {
+                        const requestBody = {
                             network: 'base',
                             fromToken: tokenInAddress,
                             toToken: tokenOutAddress,
                             fromAmount: amountInWei.toString(),
                             taker: takerAddress,
-                            slippageBps: 100 // 1% slippage
-                        })
-                    });
+                            slippageBps: 100
+                        };
+                        console.log('[SwapQuote] CDP request:', JSON.stringify(requestBody));
+
+                        const cdpResponse = await fetch(CDP_SWAP_API, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${cdpJwt}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
 
                     console.log(`[SwapQuote] CDP response status: ${cdpResponse.status}`);
 
@@ -395,6 +401,7 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
                     } else {
                         const errorText = await cdpResponse.text();
                         console.log(`[SwapQuote] CDP error response:`, errorText.substring(0, 300));
+                    }
                     }
                 }
             } catch (cdpError: any) {
