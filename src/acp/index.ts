@@ -161,10 +161,18 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                         console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
 
                         // Format deliverable per IDeliverable interface: { type: string, value: string | object }
+                        // Parse the JSON string to object for value field
+                        let parsedValue;
+                        try {
+                            parsedValue = JSON.parse(result.deliverable);
+                        } catch {
+                            parsedValue = result.deliverable;
+                        }
                         const deliverablePayload = {
                             type: serviceName,
-                            value: result.deliverable // JSON string of the result
+                            value: parsedValue
                         };
+                        console.log(`   Deliverable payload:`, JSON.stringify(deliverablePayload).substring(0, 200));
 
                         // Deliver the result
                         if (typeof job.deliver === 'function') {
