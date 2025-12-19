@@ -249,7 +249,7 @@
       }
     },
     {
-      "name": "defi-yield",
+      "name": "defiYield",
       "description": "Comprehensive DeFi yield analysis for any token on Base. Finds all yield opportunities across Aerodrome and other protocols, including APR breakdowns (trading fees + rewards), impermanent loss estimates, TVL, risk analysis, and optimal allocation strategies based on risk tolerance.",
       "requiredFunds": false,
       "slaMinutes": 5,
@@ -307,7 +307,7 @@
       }
     },
     {
-      "name": "lp-analysis",
+      "name": "lpAnalysis",
       "description": "Detailed liquidity position analysis for Aerodrome and Uniswap V3 pools on Base. Returns TVL, reserves, APR breakdown (trading fees + AERO rewards), health score, pending rewards, and actionable recommendations.",
       "requiredFunds": false,
       "slaMinutes": 5,
@@ -365,7 +365,7 @@
       }
     },
     {
-      "name": "top-pools",
+      "name": "topPools",
       "description": "Get top yielding liquidity pools on Aerodrome (Base's largest DEX). Returns pools sorted by APR with TVL, reward rates, and pool type (stable/volatile).",
       "requiredFunds": false,
       "slaMinutes": 10,
