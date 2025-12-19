@@ -376,6 +376,14 @@ async function getTokenAddress(symbol: string): Promise<string | null> {
         'BACK': '0x558881c4959e9cf961a7E1815FCD6586906babd2',
         'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
         'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+        'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
+        'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed',
+        'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4',
+        'TOSHI': '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4',
+        'HIGHER': '0x0578d8A44db98B23BF096A382e016e29a5Ce0ffe',
+        'WELL': '0xA88594D404727625A9437C3f886C7643872296AE',
+        'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+        'cbBTC': '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
     };
 
     // Check if it's already an address
@@ -383,7 +391,29 @@ async function getTokenAddress(symbol: string): Promise<string | null> {
         return symbol;
     }
 
-    return tokens[symbol.toUpperCase()] || null;
+    const address = tokens[symbol.toUpperCase()];
+    if (address) {
+        return address;
+    }
+
+    // Try CoinGecko lookup as fallback
+    try {
+        const response = await fetch(
+            `https://api.coingecko.com/api/v3/coins/${symbol.toLowerCase()}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false`
+        );
+        if (response.ok) {
+            const data = await response.json();
+            const baseAddress = data.platforms?.base;
+            if (baseAddress) {
+                console.log(`[getTokenAddress] Found ${symbol} via CoinGecko: ${baseAddress}`);
+                return baseAddress;
+            }
+        }
+    } catch (e) {
+        // Ignore CoinGecko errors
+    }
+
+    return null;
 }
 
 /**
