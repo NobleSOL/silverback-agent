@@ -104,10 +104,7 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
 
                 console.log(`\n📥 [ACP WebSocket] Job event!`);
                 console.log(`   Job ID: ${jobId}, Phase: ${phase}, MemoId: ${memoId}`);
-                console.log(`   Job keys:`, Object.keys(job));
-                console.log(`   Job.client:`, job.client);
-                console.log(`   Job.buyer:`, job.buyer);
-                console.log(`   Job.requester:`, job.requester);
+                console.log(`   Client (buyer): ${job.clientAddress}`);
 
                 try {
                     // Get service details - handle various nested structures
@@ -149,7 +146,8 @@ export async function initializeAcp(): Promise<AcpPlugin | null> {
                         console.log(`   🔄 Phase 2: Processing and delivering...`);
 
                         // Get buyer's wallet address from job for swap execution
-                        const buyerAddress = job.client || job.buyer || job.requester || job.clientAddress || job.buyerAddress || job.from;
+                        // AcpJob.clientAddress is the buyer's wallet
+                        const buyerAddress = job.clientAddress;
                         if (buyerAddress) {
                             console.log(`   Buyer wallet: ${buyerAddress}`);
                             // Add buyer's wallet to params for execute-swap
