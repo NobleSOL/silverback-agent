@@ -1811,6 +1811,8 @@ export async function processServiceRequest(
         let result: any;
 
         switch (serviceType.toLowerCase()) {
+            case 'swapquote':
+            case 'getswapquote':
             case 'swap-quote':
             case 'get-swap-quote':
             case 'dex-quote':
