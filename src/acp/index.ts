@@ -33,7 +33,10 @@ dotenv.config();
 export type { AcpState };
 
 // ACP Configuration from environment
+// ACP_AGENT_WALLET_ADDRESS should be the smart account registered on Virtuals (for SDK connection)
+// ACP_SWAP_WALLET_ADDRESS is the EOA that receives funds and executes swaps
 const ACP_AGENT_WALLET_ADDRESS = process.env.ACP_AGENT_WALLET_ADDRESS;
+const ACP_SWAP_WALLET_ADDRESS = process.env.ACP_SWAP_WALLET_ADDRESS || process.env.ACP_AGENT_WALLET_ADDRESS;
 const ACP_PRIVATE_KEY = process.env.ACP_PRIVATE_KEY || process.env.WHITELISTED_WALLET_PRIVATE_KEY;
 const ACP_ENTITY_ID = process.env.ACP_ENTITY_ID;
 const ACP_CLUSTER = process.env.ACP_CLUSTER || 'defi'; // DeFi cluster for AHF integration
@@ -229,9 +232,9 @@ async function handleRequestPhase(job: AcpJob, jobName: string) {
         const fareAmount = new FareAmount(amountIn, fare);
 
         // Request funds from buyer using PAYABLE_REQUEST
-        // Use ACP_AGENT_WALLET_ADDRESS (EOA) instead of job.providerAddress (smart account)
+        // Use ACP_SWAP_WALLET_ADDRESS (EOA) instead of job.providerAddress (smart account)
         // so we can directly execute swaps with the received funds
-        const receivingWallet = ACP_AGENT_WALLET_ADDRESS as Address;
+        const receivingWallet = ACP_SWAP_WALLET_ADDRESS as Address;
         console.log(`   📤 Requesting ${amountIn} ${tokenIn} from buyer to ${receivingWallet}...`);
         await job.createPayableRequirement(
             `Send ${amountIn} ${tokenIn} to execute swap`,
