@@ -308,30 +308,34 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
             if (!tokenOutAddress) {
                 throw new Error(`Unknown token: ${tokenOut}`);
             }
-            const outputFare = await Fare.fromContractAddress(tokenOutAddress as Address, config);
 
-            // Transfer tokens from EOA to smart account so deliverPayable can send them
-            // ACP's deliverPayable() transfers from the registered smart account wallet
+            // Transfer tokens directly from EOA to buyer
             const SWAP_PRIVATE_KEY = process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || process.env.ACP_PRIVATE_KEY;
-            if (SWAP_PRIVATE_KEY) {
-                const provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
-                const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
-                const tokenContract = new ethers.Contract(
-                    tokenOutAddress,
-                    ['function transfer(address to, uint256 amount) returns (bool)'],
-                    wallet
-                );
-                const amountWei = ethers.parseUnits(swapResult.data?.actualOutput || '0', outputFare.decimals);
-                console.log(`   📤 Transferring ${outputAmount} ${tokenOut} to smart account ${ACP_AGENT_WALLET_ADDRESS}...`);
-                const transferTx = await tokenContract.transfer(ACP_AGENT_WALLET_ADDRESS, amountWei);
-                await transferTx.wait();
-                console.log(`   ✅ Transfer to smart account confirmed`);
+            if (!SWAP_PRIVATE_KEY) {
+                throw new Error("No private key configured for token transfer");
             }
+
+            const provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
+            const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
+
+            // Get token decimals
+            const tokenContract = new ethers.Contract(
+                tokenOutAddress,
+                ['function transfer(address to, uint256 amount) returns (bool)', 'function decimals() view returns (uint8)'],
+                wallet
+            );
+            const decimals = await tokenContract.decimals();
+            const amountWei = ethers.parseUnits(swapResult.data?.actualOutput || '0', decimals);
+
+            console.log(`   📤 Transferring ${outputAmount} ${tokenOut} to buyer ${job.clientAddress}...`);
+            const transferTx = await tokenContract.transfer(job.clientAddress, amountWei);
+            const transferReceipt = await transferTx.wait();
+            console.log(`   ✅ Transfer to buyer confirmed: ${transferReceipt.hash}`);
 
             const deliverable: DeliverablePayload = {
                 type: "swap_result",
                 value: {
-                    txHash: swapResult.data?.txHash,
+                    txHash: transferReceipt.hash,
                     sold: `${netAmount} ${tokenIn}`,
                     received: `${outputAmount} ${tokenOut}`,
                     executionPrice: swapResult.data?.executionPrice,
@@ -339,12 +343,9 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
                 }
             };
 
-            console.log(`   📤 Delivering ${outputAmount} ${tokenOut} to buyer via ACP...`);
-            await job.deliverPayable(
-                deliverable,
-                new FareAmount(outputAmount, outputFare),
-                true // skipFee - we already took our fee in the swap
-            );
+            // Use regular deliver() since we already transferred the tokens
+            console.log(`   📤 Marking job as delivered...`);
+            await job.deliver(deliverable);
             console.log(`   ✅ Swap completed and delivered!`);
 
         } catch (swapErr: any) {
