@@ -348,7 +348,10 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
                     if (!takerAddress) {
                         console.log('[SwapQuote] CDP: No taker address configured, skipping');
                     } else {
-                        const requestBody = {
+                        // If taker is a smart contract (ERC-4337), we need signerAddress
+                        const signerAddress = process.env.WHITELISTED_WALLET_ADDRESS;
+
+                        const requestBody: Record<string, any> = {
                             network: 'base',
                             fromToken: tokenInAddress,
                             toToken: tokenOutAddress,
@@ -356,6 +359,12 @@ export async function handleSwapQuote(input: SwapQuoteInput): Promise<SwapQuoteO
                             taker: takerAddress,
                             slippageBps: 100
                         };
+
+                        // Add signerAddress if taker is smart account and we have a signer
+                        if (signerAddress && takerAddress !== signerAddress) {
+                            requestBody.signerAddress = signerAddress;
+                        }
+
                         console.log('[SwapQuote] CDP request:', JSON.stringify(requestBody));
 
                         const cdpResponse = await fetch(CDP_SWAP_API, {
