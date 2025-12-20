@@ -1,6 +1,6 @@
 {
   "name": "topCoins",
-  "description": "Get top DeFi protocols ranked by TVL with market data, category breakdown, and trend analysis. Filter by chain (Base, Ethereum, etc.) or category (DEX, Lending, etc.).",
+  "description": "Get top DeFi protocols ranked by TVL with market data, token addresses, chain TVL breakdown, and trend analysis. Filter by chain (Base, Ethereum, etc.) or category (DEX, Lending, etc.).",
   "requiredFunds": false,
   "slaMinutes": 5,
   "requirement": {
@@ -26,7 +26,7 @@
     "properties": {
       "topProtocols": {
         "type": "array",
-        "description": "Array of top protocols with name, symbol, TVL, mcap, changes, and trend"
+        "description": "Array of protocols with: name, symbol, category, tokenAddress (0x format), tvl, tvlRaw, mcap, fdv, volume24h, change (1h/1d/7d), trend, chains, chainTvls (top 5 by TVL), url"
       },
       "summary": {
         "type": "object",

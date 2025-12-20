@@ -3318,22 +3318,53 @@ export async function handleTopCoins(input: {
             if (change1d > 5) trend = 'rising';
             else if (change1d < -5) trend = 'falling';
 
+            // Extract token address if available
+            let tokenAddress = null;
+            if (p.address) {
+                // address can be "chain:address" or just "address"
+                tokenAddress = typeof p.address === 'string'
+                    ? p.address.includes(':') ? p.address.split(':')[1] : p.address
+                    : null;
+            }
+
+            // Get chain-specific TVL breakdown (top 5 by TVL, exclude borrowed/staking/pool2 etc)
+            const chainTvls: Record<string, string> = {};
+            if (p.chainTvls) {
+                const excludePatterns = ['borrowed', 'staking', 'pool2', 'vesting', 'treasury'];
+                const chainEntries = Object.entries(p.chainTvls)
+                    .filter(([name, tvl]) =>
+                        typeof tvl === 'number' &&
+                        tvl > 0 &&
+                        !name.includes('-') &&
+                        !excludePatterns.includes(name.toLowerCase())
+                    )
+                    .sort((a, b) => (b[1] as number) - (a[1] as number))
+                    .slice(0, 5);
+
+                for (const [chainName, tvl] of chainEntries) {
+                    chainTvls[chainName] = formatLargeNumber(tvl as number);
+                }
+            }
+
             return {
                 name: p.name,
                 symbol: p.symbol !== '-' ? p.symbol : null,
                 category: p.category,
+                tokenAddress,
                 tvl: formatLargeNumber(p.tvl),
                 tvlRaw: p.tvl,
-                mcap: p.mcap ? formatLargeNumber(p.mcap) : 'N/A',
+                mcap: p.mcap ? formatLargeNumber(p.mcap) : null,
+                fdv: p.fdv ? formatLargeNumber(p.fdv) : null,
+                volume24h: p.volume_24h ? formatLargeNumber(p.volume_24h) : null,
                 change: {
-                    '1h': p.change_1h ? `${p.change_1h.toFixed(2)}%` : 'N/A',
+                    '1h': p.change_1h ? `${p.change_1h.toFixed(2)}%` : null,
                     '1d': `${change1d.toFixed(2)}%`,
                     '7d': `${change7d.toFixed(2)}%`
                 },
                 trend,
                 chains: p.chains?.slice(0, 5) || [],
-                url: p.url,
-                logo: p.logo
+                chainTvls: Object.keys(chainTvls).length > 0 ? chainTvls : null,
+                url: p.url
             };
         });
 
