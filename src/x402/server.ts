@@ -162,6 +162,13 @@ initializeServer();
 // === FREE ENDPOINTS ===
 
 /**
+ * Root redirect to pricing
+ */
+app.get('/', (_req: Request, res: Response) => {
+    res.redirect('/api/v1/pricing');
+});
+
+/**
  * Health check endpoint
  */
 app.get('/health', (_req: Request, res: Response) => {
