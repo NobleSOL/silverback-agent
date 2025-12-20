@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:x402": "node dist/x402/standalone.js",
     "dev": "ts-node src/index.ts",
+    "dev:x402": "ts-node src/x402/standalone.ts",
     "watch": "tsc --watch"
   },
   "keywords": [

@@ -1,0 +1,50 @@
+{
+  "jobs": [
+    {
+      "name": "topProtocols",
+      "description": "Get top DeFi protocols ranked by TVL with market data, token addresses, chain TVL breakdown, and trend analysis. Filter by chain (Base, Ethereum, etc.) or category (DEX, Lending, etc.).",
+      "requiredFunds": false,
+      "slaMinutes": 5,
+      "requirement": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "Number of protocols to return (1-50). Default: 10"
+          },
+          "chain": {
+            "type": "string",
+            "description": "Filter by chain: 'base', 'ethereum', 'arbitrum', 'all'. Default: 'base'"
+          },
+          "category": {
+            "type": "string",
+            "description": "Filter by category: 'dex', 'lending', 'bridge', 'yield', etc. Optional"
+          }
+        },
+        "required": []
+      },
+      "deliverable": {
+        "type": "object",
+        "properties": {
+          "topProtocols": {
+            "type": "array",
+            "description": "Array of protocols with: name, symbol, category, tokenAddress, tvl, mcap, fdv, volume24h, change (1h/1d/7d), trend, chains, chainTvls (top 5), url"
+          },
+          "summary": {
+            "type": "object",
+            "description": "Total protocols, total TVL, average 1d change, chain/category filters"
+          },
+          "categoryBreakdown": {
+            "type": "array",
+            "description": "TVL breakdown by category with percentages"
+          }
+        },
+        "required": ["topProtocols", "summary", "categoryBreakdown"]
+      },
+      "price": {
+        "type": "fixed",
+        "value": 0.03
+      }
+    }
+  ]
+}

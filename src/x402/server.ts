@@ -17,6 +17,7 @@ import {
     handleYieldAnalysis,
     handleLPAnalysis,
     handleTopPools,
+    handleTopProtocols,
     handleTopCoins,
     SwapQuoteInput,
     PoolAnalysisInput,
@@ -134,11 +135,18 @@ function initializeServer() {
                         description: "Top yielding pools on Base DEXes"
                     }
                 },
-                "GET /api/v1/top-coins": {
+                "GET /api/v1/top-protocols": {
                     price: "$0.03",
                     network: "base",
                     config: {
                         description: "Top DeFi protocols by TVL"
+                    }
+                },
+                "GET /api/v1/top-coins": {
+                    price: "$0.03",
+                    network: "base",
+                    config: {
+                        description: "Top cryptocurrencies by market cap"
                     }
                 }
             }
@@ -251,10 +259,17 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
             },
             {
                 method: 'GET',
-                path: '/api/v1/top-coins',
+                path: '/api/v1/top-protocols',
                 price: '$0.03',
                 description: 'Top DeFi protocols by TVL',
                 parameters: { limit: 'number (default: 10)', chain: 'chain name (default: base)', category: 'dex/lending/etc (optional)' }
+            },
+            {
+                method: 'GET',
+                path: '/api/v1/top-coins',
+                price: '$0.03',
+                description: 'Top cryptocurrencies by market cap',
+                parameters: { limit: 'number (default: 10)', chain: 'chain name (default: all)' }
             }
         ],
         freeEndpoints: [
@@ -722,16 +737,35 @@ app.get('/api/v1/top-pools', async (req: Request, res: Response) => {
 });
 
 /**
- * Top Coins/Protocols - $0.03
+ * Top Protocols - $0.03
  * Get top DeFi protocols by TVL
  */
-app.get('/api/v1/top-coins', async (req: Request, res: Response) => {
+app.get('/api/v1/top-protocols', async (req: Request, res: Response) => {
     try {
         const limit = parseInt(req.query.limit as string) || 10;
         const chain = req.query.chain as string || 'base';
         const category = req.query.category as string;
 
-        const result = await handleTopCoins({ limit, chain, category });
+        const result = await handleTopProtocols({ limit, chain, category });
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Internal server error'
+        });
+    }
+});
+
+/**
+ * Top Coins - $0.03
+ * Get top cryptocurrencies by market cap
+ */
+app.get('/api/v1/top-coins', async (req: Request, res: Response) => {
+    try {
+        const limit = parseInt(req.query.limit as string) || 10;
+        const chain = req.query.chain as string || 'all';
+
+        const result = await handleTopCoins({ limit, chain });
         res.json(result);
     } catch (error) {
         res.status(500).json({

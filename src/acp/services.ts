@@ -1854,14 +1854,21 @@ export async function processServiceRequest(
                 result = await handleTopPools(input);
                 break;
 
-            case 'topcoins':
-            case 'top_coins':
-            case 'top-coins':
-            case 'top-protocols':
             case 'topprotocols':
+            case 'top_protocols':
+            case 'top-protocols':
             case 'defi-protocols':
             case 'tvl-ranking':
             case 'top-tvl':
+                result = await handleTopProtocols(input);
+                break;
+
+            case 'topcoins':
+            case 'top_coins':
+            case 'top-coins':
+            case 'top-tokens':
+            case 'toptokens':
+            case 'token-ranking':
                 result = await handleTopCoins(input);
                 break;
 
@@ -3257,10 +3264,10 @@ async function findAerodromePoolByTokens(
 }
 
 /**
- * Top Coins/Protocols - Get top DeFi protocols by TVL
+ * Top Protocols - Get top DeFi protocols by TVL
  * Uses DefiLlama API for reliable data
  */
-export async function handleTopCoins(input: {
+export async function handleTopProtocols(input: {
     limit?: number;
     category?: string;
     chain?: string;
@@ -3270,7 +3277,7 @@ export async function handleTopCoins(input: {
         const category = input.category?.toLowerCase();
         const chain = input.chain?.toLowerCase() || 'base';
 
-        console.log(`[TopCoins] Fetching protocol data from DefiLlama...`);
+        console.log(`[TopProtocols] Fetching protocol data from DefiLlama...`);
         const response = await fetch('https://api.llama.fi/protocols', {
             headers: { 'Accept': 'application/json' }
         });
@@ -3304,7 +3311,7 @@ export async function handleTopCoins(input: {
             return true;
         });
 
-        console.log(`[TopCoins] Found ${filtered.length} protocols matching criteria`);
+        console.log(`[TopProtocols] Found ${filtered.length} protocols matching criteria`);
 
         // Sort by TVL (highest first)
         filtered.sort((a: any, b: any) => (b.tvl || 0) - (a.tvl || 0));
@@ -3408,7 +3415,135 @@ export async function handleTopCoins(input: {
     } catch (e) {
         return {
             success: false,
+            error: `Failed to get top protocols: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
+    }
+}
+
+/**
+ * Top Coins - Get top tokens by market cap
+ * Uses CoinGecko API for token data
+ */
+export async function handleTopCoins(input: {
+    limit?: number;
+    category?: string;
+    chain?: string;
+}): Promise<any> {
+    try {
+        const limit = Math.min(input.limit || 10, 50);
+        const chain = input.chain?.toLowerCase() || 'base';
+
+        console.log(`[TopCoins] Fetching token data from CoinGecko...`);
+
+        // Map chain names to CoinGecko platform IDs
+        const chainToPlatform: Record<string, string> = {
+            'base': 'base',
+            'ethereum': 'ethereum',
+            'arbitrum': 'arbitrum-one',
+            'optimism': 'optimistic-ethereum',
+            'polygon': 'polygon-pos',
+            'all': ''
+        };
+
+        const platform = chainToPlatform[chain] || 'base';
+
+        // For 'all' chains, get top coins by market cap globally
+        // For specific chains, get coins on that chain
+        let url: string;
+        if (chain === 'all') {
+            url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=1h,24h,7d`;
+        } else {
+            // Get coins by platform (chain)
+            url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&category=${platform}-ecosystem&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=1h,24h,7d`;
+        }
+
+        const response = await fetch(url, {
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+            // Fallback: try without category filter
+            if (chain !== 'all') {
+                console.log(`[TopCoins] Chain filter failed, fetching top coins globally...`);
+                const fallbackUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=1h,24h,7d`;
+                const fallbackResponse = await fetch(fallbackUrl, {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!fallbackResponse.ok) {
+                    return {
+                        success: false,
+                        error: `Failed to fetch token data: ${fallbackResponse.status}`
+                    };
+                }
+                const tokens = await fallbackResponse.json();
+                return formatTopCoinsResponse(tokens, limit, 'all');
+            }
+            return {
+                success: false,
+                error: `Failed to fetch token data: ${response.status}`
+            };
+        }
+
+        const tokens = await response.json();
+        console.log(`[TopCoins] Retrieved ${tokens.length} tokens`);
+
+        return formatTopCoinsResponse(tokens, limit, chain);
+    } catch (e) {
+        return {
+            success: false,
             error: `Failed to get top coins: ${e instanceof Error ? e.message : 'Unknown error'}`
         };
     }
+}
+
+function formatTopCoinsResponse(tokens: any[], limit: number, chain: string): any {
+    const topCoins = tokens.slice(0, limit).map((t: any, index: number) => {
+        const change1d = t.price_change_percentage_24h || 0;
+
+        let trend = 'stable';
+        if (change1d > 5) trend = 'rising';
+        else if (change1d < -5) trend = 'falling';
+
+        return {
+            rank: index + 1,
+            name: t.name,
+            symbol: t.symbol?.toUpperCase(),
+            price: t.current_price ? `$${t.current_price.toLocaleString()}` : null,
+            priceRaw: t.current_price,
+            marketCap: t.market_cap ? formatLargeNumber(t.market_cap) : null,
+            marketCapRaw: t.market_cap,
+            volume24h: t.total_volume ? formatLargeNumber(t.total_volume) : null,
+            circulatingSupply: t.circulating_supply ? formatLargeNumber(t.circulating_supply) : null,
+            change: {
+                '1h': t.price_change_percentage_1h_in_currency ? `${t.price_change_percentage_1h_in_currency.toFixed(2)}%` : null,
+                '24h': `${change1d.toFixed(2)}%`,
+                '7d': t.price_change_percentage_7d_in_currency ? `${t.price_change_percentage_7d_in_currency.toFixed(2)}%` : null
+            },
+            trend,
+            ath: t.ath ? `$${t.ath.toLocaleString()}` : null,
+            athChangePercent: t.ath_change_percentage ? `${t.ath_change_percentage.toFixed(1)}%` : null,
+            image: t.image
+        };
+    });
+
+    const totalMarketCap = tokens.reduce((sum: number, t: any) => sum + (t.market_cap || 0), 0);
+    const totalVolume = tokens.reduce((sum: number, t: any) => sum + (t.total_volume || 0), 0);
+    const avgChange24h = tokens.length > 0
+        ? tokens.reduce((sum: number, t: any) => sum + (t.price_change_percentage_24h || 0), 0) / tokens.length
+        : 0;
+
+    return {
+        success: true,
+        data: {
+            topCoins,
+            summary: {
+                totalCoins: topCoins.length,
+                totalMarketCap: formatLargeNumber(totalMarketCap),
+                totalVolume24h: formatLargeNumber(totalVolume),
+                avgChange24h: `${avgChange24h.toFixed(2)}%`,
+                chain: chain === 'all' ? 'All Chains' : chain.charAt(0).toUpperCase() + chain.slice(1)
+            },
+            timestamp: new Date().toISOString()
+        }
+    };
 }
