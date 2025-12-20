@@ -14,10 +14,15 @@ import {
     handlePoolAnalysis,
     handleTechnicalAnalysis,
     handleExecuteSwap,
+    handleYieldAnalysis,
+    handleLPAnalysis,
+    handleTopPools,
     SwapQuoteInput,
     PoolAnalysisInput,
     TechnicalAnalysisInput,
-    ExecuteSwapInput
+    ExecuteSwapInput,
+    YieldAnalysisInput,
+    LPAnalysisInput
 } from '../acp/services';
 
 // Import backtest functions
@@ -106,6 +111,27 @@ function initializeServer() {
                     config: {
                         description: "Run strategy backtest on historical data"
                     }
+                },
+                "POST /api/v1/defi-yield": {
+                    price: "$0.05",
+                    network: "base",
+                    config: {
+                        description: "DeFi yield opportunities for any token on Base"
+                    }
+                },
+                "POST /api/v1/lp-analysis": {
+                    price: "$0.05",
+                    network: "base",
+                    config: {
+                        description: "LP position analysis for token pairs"
+                    }
+                },
+                "GET /api/v1/top-pools": {
+                    price: "$0.03",
+                    network: "base",
+                    config: {
+                        description: "Top yielding pools on Base DEXes"
+                    }
                 }
             }
         )
@@ -193,6 +219,27 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
                 price: '$1.00',
                 description: 'Run strategy backtest on historical data',
                 parameters: { strategy: 'momentum or mean_reversion', token: 'CoinGecko ID', period: 'days (default: 30)', signalThreshold: '0-100 (default: 70)' }
+            },
+            {
+                method: 'POST',
+                path: '/api/v1/defi-yield',
+                price: '$0.05',
+                description: 'DeFi yield opportunities for any token on Base',
+                parameters: { token: 'symbol (USDC, WETH, cbBTC) or address', riskTolerance: 'low/medium/high (default: medium)' }
+            },
+            {
+                method: 'POST',
+                path: '/api/v1/lp-analysis',
+                price: '$0.05',
+                description: 'LP position analysis for token pairs',
+                parameters: { tokenPair: 'e.g., USDC/WETH', tokenA: 'symbol', tokenB: 'symbol' }
+            },
+            {
+                method: 'GET',
+                path: '/api/v1/top-pools',
+                price: '$0.03',
+                description: 'Top yielding pools on Base DEXes',
+                parameters: { limit: 'number (default: 10)', minTvl: 'USD (default: 100000)' }
             }
         ],
         freeEndpoints: [
@@ -580,6 +627,77 @@ app.post('/api/v1/backtest', async (req: Request, res: Response) => {
                 timestamp: new Date().toISOString()
             }
         });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Internal server error'
+        });
+    }
+});
+
+/**
+ * DeFi Yield Analysis - $0.05
+ * Find yield opportunities for any token on Base
+ */
+app.post('/api/v1/defi-yield', async (req: Request, res: Response) => {
+    try {
+        const input: YieldAnalysisInput = req.body;
+
+        if (!input.token) {
+            res.status(400).json({
+                success: false,
+                error: 'Missing required field: token (symbol or address)'
+            });
+            return;
+        }
+
+        const result = await handleYieldAnalysis(input);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Internal server error'
+        });
+    }
+});
+
+/**
+ * LP Analysis - $0.05
+ * Analyze LP positions for token pairs
+ */
+app.post('/api/v1/lp-analysis', async (req: Request, res: Response) => {
+    try {
+        const input: LPAnalysisInput = req.body;
+
+        if (!input.tokenPair && (!input.tokenA || !input.tokenB)) {
+            res.status(400).json({
+                success: false,
+                error: 'Missing required fields: tokenPair (e.g., "USDC/WETH") or tokenA and tokenB'
+            });
+            return;
+        }
+
+        const result = await handleLPAnalysis(input);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Internal server error'
+        });
+    }
+});
+
+/**
+ * Top Pools - $0.03
+ * Get top yielding pools on Base DEXes
+ */
+app.get('/api/v1/top-pools', async (req: Request, res: Response) => {
+    try {
+        const limit = parseInt(req.query.limit as string) || 10;
+        const minTvl = parseInt(req.query.minTvl as string) || 100000;
+
+        const result = await handleTopPools({ limit, minTvl });
+        res.json(result);
     } catch (error) {
         res.status(500).json({
             success: false,
