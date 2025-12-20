@@ -58,7 +58,7 @@ const SERVICE_ONLY_JOBS = [
     'swapQuote', 'getSwapQuote', 'swap-quote',  // Quote services
     'getPoolAnalysis', 'pool-analysis',          // Pool analysis
     'getTechnicalAnalysis', 'technical-analysis', // Technical analysis
-    'defiYield', 'lpAnalysis', 'topPools'        // LP/Yield services
+    'defiYield', 'lpAnalysis', 'topPools', 'topCoins'  // LP/Yield/Market services
 ];
 
 /**

@@ -17,6 +17,7 @@ import {
     handleYieldAnalysis,
     handleLPAnalysis,
     handleTopPools,
+    handleTopCoins,
     SwapQuoteInput,
     PoolAnalysisInput,
     TechnicalAnalysisInput,
@@ -132,6 +133,13 @@ function initializeServer() {
                     config: {
                         description: "Top yielding pools on Base DEXes"
                     }
+                },
+                "GET /api/v1/top-coins": {
+                    price: "$0.03",
+                    network: "base",
+                    config: {
+                        description: "Top DeFi protocols by TVL"
+                    }
                 }
             }
         )
@@ -240,6 +248,13 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
                 price: '$0.03',
                 description: 'Top yielding pools on Base DEXes',
                 parameters: { limit: 'number (default: 10)', minTvl: 'USD (default: 100000)' }
+            },
+            {
+                method: 'GET',
+                path: '/api/v1/top-coins',
+                price: '$0.03',
+                description: 'Top DeFi protocols by TVL',
+                parameters: { limit: 'number (default: 10)', chain: 'chain name (default: base)', category: 'dex/lending/etc (optional)' }
             }
         ],
         freeEndpoints: [
@@ -697,6 +712,26 @@ app.get('/api/v1/top-pools', async (req: Request, res: Response) => {
         const minTvl = parseInt(req.query.minTvl as string) || 100000;
 
         const result = await handleTopPools({ limit, minTvl });
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Internal server error'
+        });
+    }
+});
+
+/**
+ * Top Coins/Protocols - $0.03
+ * Get top DeFi protocols by TVL
+ */
+app.get('/api/v1/top-coins', async (req: Request, res: Response) => {
+    try {
+        const limit = parseInt(req.query.limit as string) || 10;
+        const chain = req.query.chain as string || 'base';
+        const category = req.query.category as string;
+
+        const result = await handleTopCoins({ limit, chain, category });
         res.json(result);
     } catch (error) {
         res.status(500).json({

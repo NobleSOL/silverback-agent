@@ -1854,6 +1854,17 @@ export async function processServiceRequest(
                 result = await handleTopPools(input);
                 break;
 
+            case 'topcoins':
+            case 'top_coins':
+            case 'top-coins':
+            case 'top-protocols':
+            case 'topprotocols':
+            case 'defi-protocols':
+            case 'tvl-ranking':
+            case 'top-tvl':
+                result = await handleTopCoins(input);
+                break;
+
             case 'defiyield':
             case 'defi_yield':
             case 'defi-yield':
@@ -3242,5 +3253,131 @@ async function findAerodromePoolByTokens(
         return poolAddress !== ethers.ZeroAddress ? poolAddress : null;
     } catch (e) {
         return null;
+    }
+}
+
+/**
+ * Top Coins/Protocols - Get top DeFi protocols by TVL
+ * Uses DefiLlama API for reliable data
+ */
+export async function handleTopCoins(input: {
+    limit?: number;
+    category?: string;
+    chain?: string;
+}): Promise<any> {
+    try {
+        const limit = Math.min(input.limit || 10, 50);
+        const category = input.category?.toLowerCase();
+        const chain = input.chain?.toLowerCase() || 'base';
+
+        console.log(`[TopCoins] Fetching protocol data from DefiLlama...`);
+        const response = await fetch('https://api.llama.fi/protocols', {
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+            return {
+                success: false,
+                error: `Failed to fetch protocol data: ${response.status}`
+            };
+        }
+
+        const protocols = await response.json();
+
+        // Filter protocols
+        let filtered = protocols.filter((p: any) => {
+            // Must have TVL
+            if (!p.tvl || p.tvl <= 0) return false;
+
+            // Filter by chain if specified
+            if (chain && chain !== 'all') {
+                const chains = (p.chains || []).map((c: string) => c.toLowerCase());
+                if (!chains.includes(chain)) return false;
+            }
+
+            // Filter by category if specified
+            if (category) {
+                const pCategory = (p.category || '').toLowerCase();
+                if (!pCategory.includes(category)) return false;
+            }
+
+            return true;
+        });
+
+        console.log(`[TopCoins] Found ${filtered.length} protocols matching criteria`);
+
+        // Sort by TVL (highest first)
+        filtered.sort((a: any, b: any) => (b.tvl || 0) - (a.tvl || 0));
+
+        // Take top N
+        const topProtocols = filtered.slice(0, limit).map((p: any) => {
+            const change1d = p.change_1d || 0;
+            const change7d = p.change_7d || 0;
+
+            let trend = 'stable';
+            if (change1d > 5) trend = 'rising';
+            else if (change1d < -5) trend = 'falling';
+
+            return {
+                name: p.name,
+                symbol: p.symbol !== '-' ? p.symbol : null,
+                category: p.category,
+                tvl: formatLargeNumber(p.tvl),
+                tvlRaw: p.tvl,
+                mcap: p.mcap ? formatLargeNumber(p.mcap) : 'N/A',
+                change: {
+                    '1h': p.change_1h ? `${p.change_1h.toFixed(2)}%` : 'N/A',
+                    '1d': `${change1d.toFixed(2)}%`,
+                    '7d': `${change7d.toFixed(2)}%`
+                },
+                trend,
+                chains: p.chains?.slice(0, 5) || [],
+                url: p.url,
+                logo: p.logo
+            };
+        });
+
+        // Calculate market stats
+        const totalTvl = filtered.reduce((sum: number, p: any) => sum + (p.tvl || 0), 0);
+        const avgChange1d = filtered.length > 0
+            ? filtered.reduce((sum: number, p: any) => sum + (p.change_1d || 0), 0) / filtered.length
+            : 0;
+
+        // Get category breakdown
+        const categoryBreakdown: Record<string, number> = {};
+        for (const p of filtered.slice(0, 100)) {
+            const cat = p.category || 'Other';
+            categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + (p.tvl || 0);
+        }
+
+        const topCategories = Object.entries(categoryBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([cat, tvl]) => ({
+                category: cat,
+                tvl: formatLargeNumber(tvl),
+                percentage: ((tvl / totalTvl) * 100).toFixed(1) + '%'
+            }));
+
+        return {
+            success: true,
+            data: {
+                topProtocols,
+                summary: {
+                    totalProtocols: filtered.length,
+                    totalTvl: formatLargeNumber(totalTvl),
+                    avgChange1d: `${avgChange1d.toFixed(2)}%`,
+                    chain: chain === 'all' ? 'All Chains' : chain.charAt(0).toUpperCase() + chain.slice(1),
+                    category: category || 'All Categories'
+                },
+                categoryBreakdown: topCategories,
+                timestamp: new Date().toISOString()
+            }
+        };
+    } catch (e) {
+        return {
+            success: false,
+            error: `Failed to get top coins: ${e instanceof Error ? e.message : 'Unknown error'}`
+        };
     }
 }
