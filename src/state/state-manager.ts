@@ -113,6 +113,24 @@ export class StateManager {
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
+
+                CREATE TABLE IF NOT EXISTS acp_job_queue (
+                    id SERIAL PRIMARY KEY,
+                    job_id TEXT UNIQUE NOT NULL,
+                    job_name TEXT NOT NULL,
+                    requirement JSONB NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    priority INTEGER DEFAULT 0,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    result JSONB,
+                    error TEXT,
+                    retries INTEGER DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_job_queue_status ON acp_job_queue(status);
+                CREATE INDEX IF NOT EXISTS idx_job_queue_created ON acp_job_queue(created_at);
             `);
             console.log('📊 PostgreSQL tables initialized');
         } finally {

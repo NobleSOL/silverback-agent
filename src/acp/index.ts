@@ -24,6 +24,7 @@ import AcpClient, {
     DeliverablePayload
 } from "@virtuals-protocol/acp-node";
 import { processServiceRequest, handleExecuteSwapWithFunds } from "./services";
+import { enqueueJob, completeJob, failJob, getQueueStats, canAcceptJob } from "./job-queue";
 import dotenv from "dotenv";
 import { Address } from "viem";
 import { ethers } from "ethers";
@@ -215,6 +216,14 @@ async function handleNewTask(job: AcpJob, memoToSign?: AcpMemo) {
 async function handleRequestPhase(job: AcpJob, jobName: string) {
     console.log(`   🔄 REQUEST phase: Evaluating job...`);
 
+    // Check queue capacity before accepting
+    if (!canAcceptJob()) {
+        const stats = await getQueueStats();
+        console.log(`   ⏳ Queue at capacity (${stats.processing} processing, ${stats.pending} pending)`);
+        await job.reject("Server busy - please try again in a moment");
+        return;
+    }
+
     const requirement = job.requirement as any;
 
     if (isFundTransferJob(jobName)) {
@@ -274,6 +283,10 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
     console.log(`   🔄 TRANSACTION phase: Executing...`);
 
     const requirement = job.requirement as any;
+    const jobId = job.id?.toString() || `job-${Date.now()}`;
+
+    // Track job in queue
+    await enqueueJob(jobId, jobName, requirement);
 
     if (isFundTransferJob(jobName)) {
         // Fund transfer job - use buyer's funds to execute swap
@@ -359,10 +372,12 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
             // Use regular deliver() since we already transferred the tokens
             console.log(`   📤 Marking job as delivered...`);
             await job.deliver(deliverable);
+            await completeJob(jobId, deliverable);
             console.log(`   ✅ Swap completed and delivered!`);
 
         } catch (swapErr: any) {
             console.error(`   ❌ Swap execution error:`, swapErr.message);
+            await failJob(jobId, swapErr.message);
             // Try to refund
             try {
                 const tokenAddress = await getTokenAddress(tokenIn);
@@ -378,24 +393,31 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
 
     } else {
         // Service-only job - process and deliver
-        const result = await processServiceRequest(jobName, JSON.stringify(requirement));
-        console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
-
-        // Parse the deliverable
-        let parsedValue;
         try {
-            parsedValue = JSON.parse(result.deliverable);
-        } catch {
-            parsedValue = result.deliverable;
+            const result = await processServiceRequest(jobName, JSON.stringify(requirement));
+            console.log(`   ✅ Processed: ${result.deliverable?.substring(0, 150)}`);
+
+            // Parse the deliverable
+            let parsedValue;
+            try {
+                parsedValue = JSON.parse(result.deliverable);
+            } catch {
+                parsedValue = result.deliverable;
+            }
+
+            const deliverable: DeliverablePayload = {
+                type: jobName,
+                value: parsedValue
+            };
+
+            await job.deliver(deliverable);
+            await completeJob(jobId, deliverable);
+            console.log(`   ✅ Delivered!`);
+        } catch (serviceErr: any) {
+            console.error(`   ❌ Service error:`, serviceErr.message);
+            await failJob(jobId, serviceErr.message);
+            await job.reject(`Service error: ${serviceErr.message}`);
         }
-
-        const deliverable: DeliverablePayload = {
-            type: jobName,
-            value: parsedValue
-        };
-
-        await job.deliver(deliverable);
-        console.log(`   ✅ Delivered!`);
     }
 }
 
@@ -528,8 +550,10 @@ export async function getAcpState(): Promise<{ acp_status: string; [key: string]
 
     try {
         const state = await acpPlugin.getAcpState();
+        const queueStats = await getQueueStats();
         return {
             acp_status: "active",
+            queue: queueStats,
             ...state
         };
     } catch (e) {
