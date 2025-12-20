@@ -84,7 +84,7 @@ function initializeServer() {
                         description: "Full technical analysis with indicators, patterns, and signals"
                     }
                 },
-                "POST /api/v1/execute-swap": {
+                "POST /api/v1/swap": {
                     price: "$0.50",
                     network: "base",
                     config: {
@@ -195,7 +195,7 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
             },
             {
                 method: 'POST',
-                path: '/api/v1/execute-swap',
+                path: '/api/v1/swap',
                 price: '$0.50',
                 description: 'Execute swap on Silverback DEX',
                 parameters: { tokenIn: 'address/symbol', tokenOut: 'address/symbol', amountIn: 'amount', slippage: 'percent', walletAddress: 'recipient' }
@@ -335,7 +335,7 @@ app.post('/api/v1/technical-analysis', async (req: Request, res: Response) => {
  * Execute Swap - $0.50
  * Execute actual swap on Silverback DEX
  */
-app.post('/api/v1/execute-swap', async (req: Request, res: Response) => {
+app.post('/api/v1/swap', async (req: Request, res: Response) => {
     try {
         const input: ExecuteSwapInput = req.body;
 
