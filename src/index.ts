@@ -150,6 +150,12 @@ async function main() {
                                             console.log(`   Service: ${serviceName}`);
                                             console.log(`   Params:`, JSON.stringify(serviceParams).substring(0, 200));
 
+                                            // Skip processing if service is still unknown - ACP callback will handle it
+                                            if (serviceName === 'unknown') {
+                                                console.log(`   ⏳ Service not yet available, waiting for ACP callback...`);
+                                                continue;
+                                            }
+
                                             // Process the service
                                             const { processServiceRequest } = await import('./acp/services');
                                             const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
