@@ -63,6 +63,11 @@ function initializeServer() {
 
     // Configure payment routes
     // Routes without payment middleware are free
+    // Use CDP mainnet facilitator for Base mainnet
+    const facilitatorConfig = {
+        url: 'https://api.cdp.coinbase.com/platform/v2/x402'
+    };
+
     app.use(
         paymentMiddleware(
             X402_WALLET_ADDRESS as `0x${string}`,
@@ -281,7 +286,8 @@ function initializeServer() {
                         output: { example: { success: true, topCoins: [{ rank: 1, name: "Bitcoin", symbol: "BTC", price: "$95,000", marketCap: "$1.9T" }] } }
                     })
                 }
-            }
+            },
+            facilitatorConfig  // Use CDP mainnet facilitator
         )
     );
 
