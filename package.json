@@ -39,6 +39,7 @@
     "@virtuals-protocol/game-telegram-plugin": "^0.1.4",
     "@virtuals-protocol/game-twitter-node": "^0.1.4",
     "@virtuals-protocol/game-twitter-plugin": "^0.1.11",
+    "@x402/extensions": "^2.0.0",
     "better-sqlite3": "^12.5.0",
     "dotenv": "^16.4.7",
     "ethers": "^6.15.0",
