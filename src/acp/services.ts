@@ -67,6 +67,16 @@ const ROUTER_ABI = [
     'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
 ];
 
+// Unified Router swapAndForward ABI - routes through OpenOcean while collecting 0.3% fee
+const SWAP_AND_FORWARD_ABI = [
+    'function swapAndForward(tuple(address inToken, address outToken, uint256 amountIn, uint256 minAmountOut, address to, address target, bytes data, uint256 deadline, bool sweep) p) payable',
+];
+
+// Fee configuration for Silverback DEX
+const FEE_BPS = 30; // 0.3% protocol fee
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const NATIVE_SENTINEL = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+
 const ERC20_ABI = [
     'function decimals() view returns (uint8)',
     'function symbol() view returns (string)',
@@ -175,6 +185,86 @@ function generateCdpJwt(method: string, path: string): string | null {
 
 function isValidAddress(address: string): boolean {
     return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
+/**
+ * Calculate fee deduction for swapAndForward
+ */
+function applyFee(amountIn: bigint): { net: bigint; fee: bigint } {
+    const fee = (amountIn * BigInt(FEE_BPS)) / BigInt(10000);
+    return { net: amountIn - fee, fee };
+}
+
+/**
+ * Fetch swap calldata from OpenOcean for Base chain
+ * Used by swapAndForward to route through aggregator while collecting fees
+ */
+interface OpenOceanSwapResult {
+    to: string;
+    data: string;
+    value: bigint;
+    inAmountWei: bigint;
+    outAmountWei: bigint;
+    raw: any;
+}
+
+async function fetchOpenOceanSwap(
+    inTokenAddress: string,
+    outTokenAddress: string,
+    amountWei: bigint,
+    slippageBps: number,
+    account: string,
+    gasPriceWei: bigint
+): Promise<OpenOceanSwapResult> {
+    const slippagePct = (slippageBps / 100).toString();
+    const qs = new URLSearchParams({
+        inTokenAddress,
+        outTokenAddress,
+        amountDecimals: amountWei.toString(),
+        slippage: slippagePct,
+        account,
+        gasPriceDecimals: gasPriceWei.toString(),
+    });
+
+    const url = `${OPENOCEAN_API}/swap?${qs.toString()}`;
+    console.log(`[OpenOcean] Fetching swap calldata...`);
+
+    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`OpenOcean API error (${res.status}): ${text}`);
+    }
+
+    const json = await res.json();
+
+    if (json.code !== 200 && json.code !== undefined) {
+        throw new Error(`OpenOcean: ${json.error || json.message || 'Unknown error'}`);
+    }
+
+    const data = json?.data || json;
+    const to = data?.to || data?.tx?.to;
+    const dataHex = data?.data || data?.tx?.data;
+    const valueRaw = data?.value ?? data?.tx?.value ?? '0';
+    const inAmount = BigInt(data?.inAmount || data?.fromAmount || data?.amountIn || 0);
+    const outAmount = BigInt(data?.outAmount || data?.toAmount || data?.amountOut || 0);
+
+    if (!to || !dataHex) {
+        throw new Error('OpenOcean: No liquidity found for this swap route');
+    }
+
+    const dataByteLength = (dataHex.length - 2) / 2;
+    if (dataByteLength < 100) {
+        throw new Error('OpenOcean: No liquidity available for this swap route');
+    }
+
+    let value: bigint;
+    try {
+        value = BigInt(valueRaw);
+    } catch {
+        value = BigInt(0);
+    }
+
+    return { to, data: dataHex, value, inAmountWei: inAmount, outAmountWei: outAmount, raw: json };
 }
 
 // Service Input/Output Types
@@ -1432,8 +1522,87 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
             }
         }
 
-        // Fallback to direct Silverback router
-        console.log(`[ExecuteSwap] Falling back to Silverback router...`);
+        // Fallback 1: OpenOcean + swapAndForward (collects 0.3% fee, better liquidity)
+        console.log(`[ExecuteSwap] Trying OpenOcean + swapAndForward fallback...`);
+        try {
+            const gasPrice = await provider.getFeeData();
+            const gasPriceWei = gasPrice.gasPrice || ethers.parseUnits('1', 'gwei');
+
+            const { net: netAmountWei, fee: feeWei } = applyFee(amountInWei);
+            console.log(`[ExecuteSwap] Fee (0.3%): ${ethers.formatUnits(feeWei, decimalsIn)} ${symbolIn}`);
+
+            const isNativeIn = tokenInAddress.toLowerCase() === WETH_BASE.toLowerCase() ||
+                               tokenInAddress.toLowerCase() === NATIVE_SENTINEL.toLowerCase();
+
+            const openOceanInToken = isNativeIn ? NATIVE_SENTINEL : tokenInAddress;
+            const openOceanSwap = await fetchOpenOceanSwap(
+                openOceanInToken,
+                tokenOutAddress,
+                netAmountWei,
+                slippageBps,
+                SILVERBACK_UNIFIED_ROUTER,
+                gasPriceWei
+            );
+
+            const baseMinOut = openOceanSwap.outAmountWei > BigInt(0) ? openOceanSwap.outAmountWei : BigInt(0);
+            const minAmountOut = (baseMinOut * BigInt(8500)) / BigInt(10000);
+            const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+
+            if (!isNativeIn) {
+                const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
+                const allowance = await tokenInContract.allowance(wallet.address, SILVERBACK_UNIFIED_ROUTER) as bigint;
+                if (allowance < amountInWei) {
+                    console.log(`[ExecuteSwap] Approving ${symbolIn} for Unified Router...`);
+                    const tokenInWithSigner = new ethers.Contract(tokenInAddress, ERC20_ABI, wallet);
+                    const approveTx = await tokenInWithSigner.getFunction('approve')(SILVERBACK_UNIFIED_ROUTER, ethers.MaxUint256);
+                    await approveTx.wait();
+                }
+            }
+
+            const inTokenForRouter = isNativeIn ? ZERO_ADDRESS : tokenInAddress;
+            const swapParams = {
+                inToken: inTokenForRouter,
+                outToken: tokenOutAddress,
+                amountIn: amountInWei,
+                minAmountOut: minAmountOut,
+                to: recipient,
+                target: openOceanSwap.to,
+                data: openOceanSwap.data,
+                deadline: deadline,
+                sweep: true
+            };
+
+            const routerContract = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, SWAP_AND_FORWARD_ABI, wallet);
+            const tx = await routerContract.swapAndForward(swapParams, { value: isNativeIn ? amountInWei : BigInt(0) });
+
+            console.log(`[ExecuteSwap] swapAndForward tx: ${tx.hash}`);
+            const receipt = await tx.wait();
+            console.log(`[ExecuteSwap] ✅ OpenOcean + swapAndForward confirmed!`);
+
+            const amountOutHuman = ethers.formatUnits(openOceanSwap.outAmountWei, decimalsOut);
+            const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
+
+            return {
+                success: true,
+                data: {
+                    txHash: receipt.hash,
+                    actualOutput: amountOutHuman,
+                    executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
+                    sold: `${amountIn} ${symbolIn}`,
+                    received: `~${amountOutHuman} ${symbolOut}`,
+                    recipient: recipient,
+                    gasUsed: receipt.gasUsed.toString(),
+                    chain: 'Base',
+                    router: SILVERBACK_UNIFIED_ROUTER,
+                    timestamp: new Date().toISOString()
+                }
+            };
+        } catch (openOceanError: any) {
+            console.log(`[ExecuteSwap] OpenOcean fallback failed: ${openOceanError.message}`);
+        }
+
+        // Fallback 2: Direct Silverback router (limited liquidity - Silverback pools only)
+        console.log(`[ExecuteSwap] Falling back to direct Silverback router...`);
         const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
 
         // Get quote from router
@@ -1725,8 +1894,86 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
             }
         }
 
-        // Fallback to direct Silverback router
-        console.log(`[ExecuteSwapWithFunds] Falling back to Silverback router...`);
+        // Fallback 1: OpenOcean + swapAndForward (collects 0.3% fee, better liquidity)
+        console.log(`[ExecuteSwapWithFunds] Trying OpenOcean + swapAndForward fallback...`);
+        try {
+            const gasPrice = await provider.getFeeData();
+            const gasPriceWei = gasPrice.gasPrice || ethers.parseUnits('1', 'gwei');
+
+            const { net: netAmountWei, fee: feeWei } = applyFee(amountInWei);
+            console.log(`[ExecuteSwapWithFunds] Fee (0.3%): ${ethers.formatUnits(feeWei, decimalsIn)} ${symbolIn}`);
+
+            const isNativeIn = tokenInAddress.toLowerCase() === WETH_BASE.toLowerCase() ||
+                               tokenInAddress.toLowerCase() === NATIVE_SENTINEL.toLowerCase();
+
+            const openOceanInToken = isNativeIn ? NATIVE_SENTINEL : tokenInAddress;
+            const openOceanSwap = await fetchOpenOceanSwap(
+                openOceanInToken,
+                tokenOutAddress,
+                netAmountWei,
+                slippageBps,
+                SILVERBACK_UNIFIED_ROUTER,
+                gasPriceWei
+            );
+
+            const baseMinOut = openOceanSwap.outAmountWei > BigInt(0) ? openOceanSwap.outAmountWei : BigInt(0);
+            const minAmountOut = (baseMinOut * BigInt(8500)) / BigInt(10000);
+            const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+
+            if (!isNativeIn) {
+                const allowance = await tokenInContract.allowance(wallet.address, SILVERBACK_UNIFIED_ROUTER) as bigint;
+                if (allowance < amountInWei) {
+                    console.log(`[ExecuteSwapWithFunds] Approving ${symbolIn} for Unified Router...`);
+                    const tokenInWithSigner = new ethers.Contract(tokenInAddress, ERC20_ABI, wallet);
+                    const approveTx = await tokenInWithSigner.getFunction('approve')(SILVERBACK_UNIFIED_ROUTER, ethers.MaxUint256);
+                    await approveTx.wait();
+                }
+            }
+
+            const inTokenForRouter = isNativeIn ? ZERO_ADDRESS : tokenInAddress;
+            const swapParams = {
+                inToken: inTokenForRouter,
+                outToken: tokenOutAddress,
+                amountIn: amountInWei,
+                minAmountOut: minAmountOut,
+                to: recipientAddress,
+                target: openOceanSwap.to,
+                data: openOceanSwap.data,
+                deadline: deadline,
+                sweep: true
+            };
+
+            const routerContract = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, SWAP_AND_FORWARD_ABI, wallet);
+            const tx = await routerContract.swapAndForward(swapParams, { value: isNativeIn ? amountInWei : BigInt(0) });
+
+            console.log(`[ExecuteSwapWithFunds] swapAndForward tx: ${tx.hash}`);
+            const receipt = await tx.wait();
+            console.log(`[ExecuteSwapWithFunds] ✅ OpenOcean + swapAndForward confirmed!`);
+
+            const amountOutHuman = ethers.formatUnits(openOceanSwap.outAmountWei, decimalsOut);
+            const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
+
+            return {
+                success: true,
+                data: {
+                    txHash: receipt.hash,
+                    actualOutput: amountOutHuman,
+                    executionPrice: `${executionPrice} ${symbolIn}/${symbolOut}`,
+                    sold: `${amountIn} ${symbolIn}`,
+                    received: `~${amountOutHuman} ${symbolOut}`,
+                    recipient: recipientAddress,
+                    gasUsed: receipt.gasUsed.toString(),
+                    chain: 'Base',
+                    router: SILVERBACK_UNIFIED_ROUTER,
+                    timestamp: new Date().toISOString()
+                }
+            };
+        } catch (openOceanError: any) {
+            console.log(`[ExecuteSwapWithFunds] OpenOcean fallback failed: ${openOceanError.message}`);
+        }
+
+        // Fallback 2: Direct Silverback router (limited liquidity - Silverback pools only)
+        console.log(`[ExecuteSwapWithFunds] Falling back to direct Silverback router...`);
         const router = new ethers.Contract(SILVERBACK_UNIFIED_ROUTER, ROUTER_ABI, provider);
 
         // Get quote from router
