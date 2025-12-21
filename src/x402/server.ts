@@ -3,12 +3,19 @@
  *
  * Exposes Silverback's services as paid HTTP endpoints using x402 protocol.
  * Anyone can pay USDC on Base and get DeFi data/execution.
+ *
+ * IMPORTANT: For mainnet (Base), you need CDP API credentials:
+ * - CDP_API_KEY_ID: Your CDP API key ID
+ * - CDP_API_KEY_SECRET: Your CDP API key secret
+ *
+ * For testnet (Base Sepolia), no credentials are needed.
  */
 
 import express, { Request, Response, NextFunction } from 'express';
 import { paymentMiddleware } from 'x402-express';
 // @ts-ignore - module resolution issue with x402 extensions
 import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
+import { SignJWT, importPKCS8 } from 'jose';
 
 // Import existing ACP service handlers - already production-ready
 import {
@@ -36,9 +43,18 @@ import { OHLCV } from '../market-data/types';
 const app = express();
 app.use(express.json());
 
-// Get wallet address from environment
+// Get configuration from environment
 const X402_WALLET_ADDRESS = process.env.X402_WALLET_ADDRESS;
 const X402_ENABLED = process.env.X402_ENABLED === 'true';
+const X402_NETWORK = process.env.X402_NETWORK || 'base'; // 'base' for mainnet, 'base-sepolia' for testnet
+
+// CDP API credentials for mainnet
+const CDP_API_KEY_ID = process.env.CDP_API_KEY_ID;
+const CDP_API_KEY_SECRET = process.env.CDP_API_KEY_SECRET;
+
+// Facilitator URLs
+const TESTNET_FACILITATOR_URL = 'https://x402.org/facilitator';
+const MAINNET_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
 
 // CoinGecko API for price data
 const COINGECKO_API = process.env.COINGECKO_API_KEY
@@ -46,10 +62,83 @@ const COINGECKO_API = process.env.COINGECKO_API_KEY
     : "https://api.coingecko.com/api/v3";
 
 /**
+ * Generate a JWT token for CDP API authentication
+ * Based on CDP SDK implementation
+ */
+async function generateCdpJwt(method: string, host: string, path: string): Promise<string> {
+    if (!CDP_API_KEY_ID || !CDP_API_KEY_SECRET) {
+        throw new Error('CDP_API_KEY_ID and CDP_API_KEY_SECRET are required for mainnet');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const nonce = crypto.randomUUID();
+
+    // Parse the EC private key (CDP uses ES256)
+    let privateKey: Awaited<ReturnType<typeof importPKCS8>>;
+    try {
+        // CDP API key secret is in PEM format
+        if (CDP_API_KEY_SECRET.includes('-----BEGIN')) {
+            privateKey = await importPKCS8(CDP_API_KEY_SECRET, 'ES256');
+        } else {
+            // Try as raw base64
+            const keyBuffer = Buffer.from(CDP_API_KEY_SECRET, 'base64');
+            privateKey = await importPKCS8(
+                `-----BEGIN PRIVATE KEY-----\n${keyBuffer.toString('base64')}\n-----END PRIVATE KEY-----`,
+                'ES256'
+            );
+        }
+    } catch (e) {
+        throw new Error(`Failed to parse CDP API key: ${e}`);
+    }
+
+    const jwt = await new SignJWT({
+        sub: CDP_API_KEY_ID,
+        iss: 'cdp',
+        nbf: now,
+        exp: now + 120, // 2 minute expiry
+        uris: [`${method.toUpperCase()} ${host}${path}`],
+    })
+        .setProtectedHeader({ alg: 'ES256', kid: CDP_API_KEY_ID, nonce, typ: 'JWT' })
+        .sign(privateKey);
+
+    return jwt;
+}
+
+/**
+ * Create auth headers function for CDP facilitator
+ */
+async function createCdpAuthHeaders(): Promise<{
+    verify: Record<string, string>;
+    settle: Record<string, string>;
+    supported: Record<string, string>;
+}> {
+    const host = 'api.cdp.coinbase.com';
+
+    const [verifyJwt, settleJwt, supportedJwt] = await Promise.all([
+        generateCdpJwt('POST', host, '/platform/v2/x402/verify'),
+        generateCdpJwt('POST', host, '/platform/v2/x402/settle'),
+        generateCdpJwt('GET', host, '/platform/v2/x402/supported'),
+    ]);
+
+    return {
+        verify: { 'Authorization': `Bearer ${verifyJwt}` },
+        settle: { 'Authorization': `Bearer ${settleJwt}` },
+        supported: { 'Authorization': `Bearer ${supportedJwt}` },
+    };
+}
+
+/**
  * Check if x402 server is configured and enabled
  */
 export function isX402Configured(): boolean {
     return X402_ENABLED && !!X402_WALLET_ADDRESS;
+}
+
+/**
+ * Check if mainnet CDP credentials are configured
+ */
+function hasCdpCredentials(): boolean {
+    return !!(CDP_API_KEY_ID && CDP_API_KEY_SECRET);
 }
 
 /**
@@ -61,12 +150,29 @@ function initializeServer() {
         return app;
     }
 
-    // Configure payment routes
-    // Routes without payment middleware are free
-    // Use CDP mainnet facilitator for Base mainnet
-    const facilitatorConfig = {
-        url: 'https://api.cdp.coinbase.com/platform/v2/x402'
-    };
+    // Determine network and facilitator configuration
+    const isMainnet = X402_NETWORK === 'base';
+    const network = isMainnet ? 'base' : 'base-sepolia';
+
+    // Configure facilitator based on network
+    let facilitatorConfig: { url: string; createAuthHeaders?: () => Promise<any> };
+
+    if (isMainnet) {
+        if (!hasCdpCredentials()) {
+            console.warn('⚠️  CDP_API_KEY_ID and CDP_API_KEY_SECRET required for mainnet x402');
+            console.warn('   Falling back to testnet facilitator (payments will NOT work on mainnet!)');
+            facilitatorConfig = { url: TESTNET_FACILITATOR_URL };
+        } else {
+            console.log('✅ CDP credentials configured for mainnet x402');
+            facilitatorConfig = {
+                url: MAINNET_FACILITATOR_URL,
+                createAuthHeaders: createCdpAuthHeaders
+            };
+        }
+    } else {
+        console.log('ℹ️  Using testnet facilitator (Base Sepolia)');
+        facilitatorConfig = { url: TESTNET_FACILITATOR_URL };
+    }
 
     app.use(
         paymentMiddleware(
@@ -74,7 +180,7 @@ function initializeServer() {
             {
                 "POST /api/v1/swap-quote": {
                     price: "$0.02",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Get optimal swap route with price impact analysis"
                     },
@@ -94,7 +200,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/pool-analysis": {
                     price: "$0.10",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Comprehensive liquidity pool analysis with health scoring"
                     },
@@ -113,7 +219,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/technical-analysis": {
                     price: "$0.25",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Full technical analysis with indicators, patterns, and signals"
                     },
@@ -132,7 +238,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/swap": {
                     price: "$0.50",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Execute swap on Silverback DEX"
                     },
@@ -153,7 +259,7 @@ function initializeServer() {
                 },
                 "GET /api/v1/dex-metrics": {
                     price: "$0.05",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Overall DEX statistics and metrics"
                     },
@@ -163,7 +269,7 @@ function initializeServer() {
                 },
                 "GET /api/v1/price/:token": {
                     price: "$0.01",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Token price feed from CoinGecko"
                     },
@@ -178,7 +284,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/backtest": {
                     price: "$1.00",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Run strategy backtest on historical data"
                     },
@@ -198,7 +304,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/defi-yield": {
                     price: "$0.05",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "DeFi yield opportunities for any token on Base"
                     },
@@ -217,7 +323,7 @@ function initializeServer() {
                 },
                 "POST /api/v1/lp-analysis": {
                     price: "$0.05",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "LP position analysis for token pairs"
                     },
@@ -236,7 +342,7 @@ function initializeServer() {
                 },
                 "GET /api/v1/top-pools": {
                     price: "$0.03",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Top yielding pools on Base DEXes"
                     },
@@ -253,7 +359,7 @@ function initializeServer() {
                 },
                 "GET /api/v1/top-protocols": {
                     price: "$0.03",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Top DeFi protocols by TVL"
                     },
@@ -271,7 +377,7 @@ function initializeServer() {
                 },
                 "GET /api/v1/top-coins": {
                     price: "$0.03",
-                    network: "base",
+                    network: network as any,
                     config: {
                         description: "Top cryptocurrencies by market cap"
                     },

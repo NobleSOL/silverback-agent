@@ -5,7 +5,7 @@
 declare module 'x402-express' {
     import { RequestHandler } from 'express';
 
-    export type Network = 'base' | 'base-sepolia';
+    export type Network = 'base' | 'base-sepolia' | string;
 
     export interface RouteConfig {
         price: string;
@@ -24,7 +24,11 @@ declare module 'x402-express' {
 
     export interface FacilitatorConfig {
         url?: string;
-        createAuthHeaders?: () => Record<string, string>;
+        createAuthHeaders?: () => Promise<{
+            verify: Record<string, string>;
+            settle: Record<string, string>;
+            supported: Record<string, string>;
+        }>;
     }
 
     export interface PaywallConfig {
