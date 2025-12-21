@@ -81,8 +81,9 @@ async function main() {
             console.log("")
         }
 
-        // ACP polling interval - check for jobs every 30 seconds when ACP is enabled
-        const ACP_POLL_INTERVAL_MS = 30000;
+        // ACP polling interval - check for jobs frequently when ACP is enabled
+        // Default: 10 seconds (configurable via ACP_POLL_INTERVAL_MS env var)
+        const ACP_POLL_INTERVAL_MS = parseInt(process.env.ACP_POLL_INTERVAL_MS || '10000');
 
         // Run the agent with rate limiting and retry logic
         let consecutiveErrors = 0;
