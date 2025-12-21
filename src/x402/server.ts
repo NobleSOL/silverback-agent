@@ -267,21 +267,6 @@ function initializeServer() {
                         output: { example: { pairCount: 150, ethPrice: "$3500", tvl: "$5.2M" } }
                     })
                 },
-                "GET /api/v1/price/:token": {
-                    price: "$0.01",
-                    network: network as any,
-                    config: {
-                        description: "Token price feed from CoinGecko"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "ethereum" },
-                        inputSchema: {
-                            properties: { token: { type: "string", description: "CoinGecko token ID" } },
-                            required: ["token"]
-                        },
-                        output: { example: { price: 3500.50, change24h: 2.5, marketCap: 420000000000 } }
-                    })
-                },
                 "POST /api/v1/backtest": {
                     price: "$1.00",
                     network: network as any,
@@ -474,13 +459,6 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
                 description: 'Overall DEX statistics'
             },
             {
-                method: 'GET',
-                path: '/api/v1/price/:token',
-                price: '$0.01',
-                description: 'Token price feed',
-                parameters: { token: 'CoinGecko ID in URL path' }
-            },
-            {
                 method: 'POST',
                 path: '/api/v1/backtest',
                 price: '$1.00',
@@ -525,7 +503,8 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
         ],
         freeEndpoints: [
             { method: 'GET', path: '/health', description: 'Health check' },
-            { method: 'GET', path: '/api/v1/pricing', description: 'This pricing info' }
+            { method: 'GET', path: '/api/v1/pricing', description: 'This pricing info' },
+            { method: 'GET', path: '/api/v1/price/:token', description: 'Token price feed (CoinGecko)' }
         ]
     });
 });
