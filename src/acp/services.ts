@@ -67,17 +67,6 @@ const ROUTER_ABI = [
     'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
 ];
 
-// Unified Router swapAndForward ABI - routes through OpenOcean while collecting 0.3% fee
-const SWAP_AND_FORWARD_ABI = [
-    'function swapAndForward(tuple(address inToken, address outToken, uint256 amountIn, uint256 minAmountOut, address to, address target, bytes data, uint256 deadline, bool sweep) p) payable',
-];
-
-// Fee configuration for Silverback DEX
-const FEE_BPS = 30; // 0.3% protocol fee
-const FEE_RECIPIENT = '0xD34411a70EffbDd000c529bbF572082ffDcF1794';
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const NATIVE_SENTINEL = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
-
 const ERC20_ABI = [
     'function decimals() view returns (uint8)',
     'function symbol() view returns (string)',
@@ -186,119 +175,6 @@ function generateCdpJwt(method: string, path: string): string | null {
 
 function isValidAddress(address: string): boolean {
     return /^0x[a-fA-F0-9]{40}$/.test(address);
-}
-
-/**
- * Calculate fee deduction for swapAndForward
- */
-function applyFee(amountIn: bigint): { net: bigint; fee: bigint } {
-    const fee = (amountIn * BigInt(FEE_BPS)) / BigInt(10000);
-    return { net: amountIn - fee, fee };
-}
-
-/**
- * Fetch swap calldata from OpenOcean for Base chain
- * Used by swapAndForward to route through aggregator while collecting fees
- */
-interface OpenOceanSwapResult {
-    to: string;
-    data: string;
-    value: bigint;
-    inAmountWei: bigint;
-    outAmountWei: bigint;
-    raw: any;
-}
-
-async function fetchOpenOceanSwap(
-    inTokenAddress: string,
-    outTokenAddress: string,
-    amountWei: bigint,
-    slippageBps: number,
-    account: string, // This should be the router address (tokens flow from router)
-    gasPriceWei: bigint
-): Promise<OpenOceanSwapResult> {
-    const slippagePct = (slippageBps / 100).toString();
-    const qs = new URLSearchParams({
-        inTokenAddress,
-        outTokenAddress,
-        amountDecimals: amountWei.toString(),
-        slippage: slippagePct,
-        account,
-        gasPriceDecimals: gasPriceWei.toString(),
-    });
-
-    const url = `${OPENOCEAN_API}/swap?${qs.toString()}`;
-    console.log(`[OpenOcean] Fetching swap: ${url}`);
-
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`OpenOcean API error (${res.status}): ${text}`);
-    }
-
-    const json = await res.json();
-    console.log(`[OpenOcean] Response:`, JSON.stringify(json).substring(0, 500));
-
-    // Handle error responses
-    if (json.code !== 200 && json.code !== undefined) {
-        throw new Error(`OpenOcean: ${json.error || json.message || 'Unknown error'}`);
-    }
-
-    const data = json?.data || json;
-    const to = data?.to || data?.tx?.to;
-    const dataHex = data?.data || data?.tx?.data;
-    const valueRaw = data?.value ?? data?.tx?.value ?? '0';
-    const inAmount = BigInt(data?.inAmount || data?.fromAmount || data?.amountIn || 0);
-    const outAmount = BigInt(data?.outAmount || data?.toAmount || data?.amountOut || 0);
-
-    if (!to || !dataHex) {
-        throw new Error('OpenOcean: No liquidity found for this swap route');
-    }
-
-    // Validate calldata length - short calldata indicates no real route
-    const dataByteLength = (dataHex.length - 2) / 2;
-    if (dataByteLength < 100) {
-        throw new Error('OpenOcean: No liquidity available for this swap route');
-    }
-
-    let value: bigint;
-    try {
-        value = BigInt(valueRaw);
-    } catch {
-        value = BigInt(0);
-    }
-
-    return { to, data: dataHex, value, inAmountWei: inAmount, outAmountWei: outAmount, raw: json };
-}
-
-/**
- * Fetch quote from OpenOcean (no execution, just pricing)
- */
-async function fetchOpenOceanQuote(
-    inTokenAddress: string,
-    outTokenAddress: string,
-    amountWei: bigint,
-    gasPriceWei: bigint
-): Promise<{ outAmountWei: bigint; dataRaw: any }> {
-    const qs = new URLSearchParams({
-        inTokenAddress,
-        outTokenAddress,
-        amountDecimals: amountWei.toString(),
-        gasPriceDecimals: gasPriceWei.toString(),
-    });
-
-    const url = `${OPENOCEAN_API}/quote?${qs.toString()}`;
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
-
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`OpenOcean quote failed: ${res.status} ${text}`);
-    }
-
-    const json = await res.json();
-    const toAmount = BigInt(json?.data?.outAmount || json?.data?.toAmount || json?.toAmount || 0);
-
-    return { outAmountWei: toAmount, dataRaw: json };
 }
 
 // Service Input/Output Types
@@ -421,8 +297,6 @@ export interface ExecuteSwapOutput {
         gasUsed?: string;
         chain?: string;
         router?: string;
-        aggregator?: string;
-        feeCollected?: string;
         timestamp?: string;
     };
     error?: string;
