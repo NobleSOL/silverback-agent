@@ -85,6 +85,7 @@ const CDP_API_KEY_SECRET = process.env.CDP_API_KEY_SECRET;
 // Facilitator URLs
 const TESTNET_FACILITATOR_URL = 'https://x402.org/facilitator';
 const MAINNET_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
+const PAYAI_FACILITATOR_URL = 'https://facilitator.payai.network';
 
 // CoinGecko API for price data
 const COINGECKO_API = process.env.COINGECKO_API_KEY
@@ -198,28 +199,40 @@ async function initializeServer() {
     // Determine network and facilitator configuration
     const isMainnet = X402_NETWORK === 'base';
 
-    // Create facilitator client
-    let facilitatorClient: HTTPFacilitatorClient;
+    // Create facilitator clients - use array for multi-facilitator support
+    let facilitatorClients: HTTPFacilitatorClient[] = [];
 
     if (isMainnet) {
-        if (!hasCdpCredentials()) {
-            console.warn('⚠️  CDP_API_KEY_ID and CDP_API_KEY_SECRET required for mainnet x402');
-            console.warn('   Falling back to testnet facilitator (payments will NOT work on mainnet!)');
-            facilitatorClient = new HTTPFacilitatorClient({ url: TESTNET_FACILITATOR_URL });
-        } else {
-            console.log('✅ CDP credentials configured for mainnet x402');
-            facilitatorClient = new HTTPFacilitatorClient({
+        // Add CDP facilitator if credentials available (primary)
+        if (hasCdpCredentials()) {
+            console.log('✅ CDP facilitator configured (primary)');
+            facilitatorClients.push(new HTTPFacilitatorClient({
                 url: MAINNET_FACILITATOR_URL,
                 createAuthHeaders: createCdpAuthHeaders
-            });
+            }));
+        } else {
+            console.warn('⚠️  CDP_API_KEY_ID and CDP_API_KEY_SECRET not set - CDP facilitator disabled');
+        }
+
+        // Add PayAI facilitator (no API keys needed, covers gas)
+        console.log('✅ PayAI facilitator configured (secondary)');
+        facilitatorClients.push(new HTTPFacilitatorClient({
+            url: PAYAI_FACILITATOR_URL
+        }));
+
+        if (facilitatorClients.length === 0) {
+            console.warn('⚠️  No mainnet facilitators available, falling back to testnet');
+            facilitatorClients.push(new HTTPFacilitatorClient({ url: TESTNET_FACILITATOR_URL }));
+        } else {
+            console.log(`✅ Multi-facilitator mode: ${facilitatorClients.length} facilitators active`);
         }
     } else {
         console.log('ℹ️  Using testnet facilitator (Base Sepolia)');
-        facilitatorClient = new HTTPFacilitatorClient({ url: TESTNET_FACILITATOR_URL });
+        facilitatorClients.push(new HTTPFacilitatorClient({ url: TESTNET_FACILITATOR_URL }));
     }
 
-    // Create resource server and register extensions
-    const server = new x402ResourceServer(facilitatorClient);
+    // Create resource server with multiple facilitators for redundancy
+    const server = new x402ResourceServer(facilitatorClients);
 
     // Register EVM scheme for Base
     registerExactEvmScheme(server, NETWORK_CAIP2 as any);
