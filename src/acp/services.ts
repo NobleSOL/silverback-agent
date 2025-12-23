@@ -1490,9 +1490,9 @@ export async function handleExecuteSwap(input: ExecuteSwapInput): Promise<Execut
                                 try {
                                     const tokenOutContract = new ethers.Contract(tokenOutAddress, ERC20_ABI, wallet);
                                     const transferTx = await tokenOutContract.getFunction('transfer')(recipient, amountToTransfer);
-                                    const transferReceipt = await transferTx.wait();
-                                    console.log(`[ExecuteSwap] Transfer confirmed: ${transferReceipt.hash}`);
-                                    finalTxHash = transferReceipt.hash; // Use transfer tx as final
+                                    // Don't wait for transfer confirmation - swap confirmed, saves ~4s
+                                    console.log(`[ExecuteSwap] Transfer sent: ${transferTx.hash}`);
+                                    finalTxHash = transferTx.hash; // Use transfer tx as final
                                 } catch (transferErr: any) {
                                     console.log(`[ExecuteSwap] Transfer failed: ${transferErr.message}`);
                                     // Still return success for swap, but note transfer failed

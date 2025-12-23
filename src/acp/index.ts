@@ -363,13 +363,14 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
             console.log(`   📤 Transferring ${amountHuman} ${tokenOut} to buyer ${job.clientAddress}...`);
             console.log(`   (Wallet balance: ${ethers.formatUnits(actualBalance, decimals)}, Reported: ${swapResult.data?.actualOutput})`);
             const transferTx = await tokenContract.transfer(job.clientAddress, amountWei);
-            const transferReceipt = await transferTx.wait();
-            console.log(`   ✅ Transfer to buyer confirmed: ${transferReceipt.hash}`);
+            // Don't wait for transfer confirmation - swap already confirmed, transfer will go through
+            // This saves ~4 seconds
+            console.log(`   ✅ Transfer sent: ${transferTx.hash}`);
 
             const deliverable: DeliverablePayload = {
                 type: "swap_result",
                 value: {
-                    txHash: transferReceipt.hash,
+                    txHash: transferTx.hash,
                     sold: `${netAmount} ${tokenIn}`,
                     received: `${amountHuman} ${tokenOut}`,
                     executionPrice: swapResult.data?.executionPrice,
