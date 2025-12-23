@@ -18,11 +18,34 @@ import { paymentMiddleware, x402ResourceServer } from '@x402/express';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 // @ts-ignore - ESM module with our type declarations
 import { registerExactEvmScheme } from '@x402/evm/exact/server';
-// Force CJS require to avoid ESM ajv/dist/2020 resolution issue
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { bazaarResourceServerExtension, declareDiscoveryExtension } = require('@x402/extensions/bazaar');
 import { SignJWT } from 'jose';
 import * as crypto from 'crypto';
+
+// Pre-load bazaar extension via CJS require to avoid ESM ajv/dist/2020 resolution issue
+// The @x402/express middleware does dynamic import() which fails on Render
+// By pre-loading and caching in require.cache, the import() may resolve from cache
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const bazaarModule = require('@x402/extensions/bazaar');
+const { bazaarResourceServerExtension, declareDiscoveryExtension } = bazaarModule;
+
+// Patch: Pre-populate the ESM module cache by hooking into the CJS require
+// This ensures when @x402/express does import('@x402/extensions/bazaar'),
+// Node can resolve it from the already-loaded CJS module
+try {
+    // Force the module into require.cache under all possible resolution paths
+    const modulePath = require.resolve('@x402/extensions/bazaar');
+    if (!require.cache[modulePath]) {
+        require.cache[modulePath] = {
+            id: modulePath,
+            filename: modulePath,
+            loaded: true,
+            exports: bazaarModule
+        } as any;
+    }
+    console.log('✅ Bazaar extension pre-loaded via CJS');
+} catch (e) {
+    console.warn('⚠️  Could not pre-cache bazaar module:', e);
+}
 
 // Import existing ACP service handlers - already production-ready
 import {
@@ -202,7 +225,9 @@ async function initializeServer() {
     registerExactEvmScheme(server, NETWORK_CAIP2 as any);
 
     // Register Bazaar extension for discovery
+    // NOTE: bazaarResourceServerExtension was pre-loaded via CJS require at module load time
     server.registerExtension(bazaarResourceServerExtension);
+    console.log('✅ Bazaar extension registered for discovery');
 
     // Define routes with Bazaar discovery extensions
     const routes = {
