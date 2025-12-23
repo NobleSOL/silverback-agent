@@ -18,8 +18,9 @@ import { paymentMiddleware, x402ResourceServer } from '@x402/express';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 // @ts-ignore - ESM module with our type declarations
 import { registerExactEvmScheme } from '@x402/evm/exact/server';
-// @ts-ignore - ESM module with our type declarations
-import { bazaarResourceServerExtension, declareDiscoveryExtension } from '@x402/extensions/bazaar';
+// Force CJS require to avoid ESM ajv/dist/2020 resolution issue
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { bazaarResourceServerExtension, declareDiscoveryExtension } = require('@x402/extensions/bazaar');
 import { SignJWT } from 'jose';
 import * as crypto from 'crypto';
 
