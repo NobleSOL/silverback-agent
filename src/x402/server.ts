@@ -13,8 +13,6 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import { paymentMiddleware } from 'x402-express';
-// @ts-ignore - module resolution issue with x402 extensions
-import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { SignJWT, importPKCS8 } from 'jose';
 
 // Import existing ACP service handlers - already production-ready
@@ -182,200 +180,283 @@ function initializeServer() {
                     price: "$0.02",
                     network: network as any,
                     config: {
-                        description: "Get optimal swap route with price impact analysis"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenIn: "0x4200000000000000000000000000000000000006", tokenOut: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", amountIn: "1.0" },
+                        description: "Get optimal swap route with price impact analysis",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                tokenIn: { type: "string", description: "Input token address" },
-                                tokenOut: { type: "string", description: "Output token address" },
-                                amountIn: { type: "string", description: "Amount to swap" }
+                            bodyType: "json",
+                            bodyFields: {
+                                tokenIn: { type: "string", description: "Input token address (0x format)" },
+                                tokenOut: { type: "string", description: "Output token address (0x format)" },
+                                amountIn: { type: "string", description: "Amount to swap (human readable)" }
                             },
                             required: ["tokenIn", "tokenOut", "amountIn"]
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, amountOut: "3500.50", priceImpact: "0.15%", fee: "0.3%", route: "WETH -> USDC" } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                amountOut: { type: "string", description: "Expected output amount" },
+                                priceImpact: { type: "string", description: "Price impact percentage" },
+                                fee: { type: "string", description: "Swap fee" },
+                                route: { type: "string", description: "Swap route path" }
+                            },
+                            example: { success: true, amountOut: "3500.50", priceImpact: "0.15%", fee: "0.3%", route: "WETH -> USDC" }
+                        }
+                    }
                 },
                 "POST /api/v1/pool-analysis": {
                     price: "$0.10",
                     network: network as any,
                     config: {
-                        description: "Comprehensive liquidity pool analysis with health scoring"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenA: "0x4200000000000000000000000000000000000006", tokenB: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+                        description: "Comprehensive liquidity pool analysis with health scoring",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                tokenA: { type: "string", description: "First token address" },
-                                tokenB: { type: "string", description: "Second token address" }
+                            bodyType: "json",
+                            bodyFields: {
+                                tokenA: { type: "string", description: "First token address (0x format)" },
+                                tokenB: { type: "string", description: "Second token address (0x format)" }
                             },
                             required: ["tokenA", "tokenB"]
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, tvl: "$1.2M", liquidityRating: "GOOD", healthScore: 85 } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                tvl: { type: "string", description: "Total value locked" },
+                                liquidityRating: { type: "string", description: "Pool liquidity rating" },
+                                healthScore: { type: "number", description: "Pool health score 0-100" }
+                            },
+                            example: { success: true, tvl: "$1.2M", liquidityRating: "GOOD", healthScore: 85 }
+                        }
+                    }
                 },
                 "POST /api/v1/technical-analysis": {
                     price: "$0.25",
                     network: network as any,
                     config: {
-                        description: "Full technical analysis with indicators, patterns, and signals"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "bitcoin", timeframe: "7" },
+                        description: "Full technical analysis with indicators, patterns, and signals",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "CoinGecko token ID" },
-                                timeframe: { type: "string", description: "Days: 1, 7, 14, or 30" }
+                            bodyType: "json",
+                            bodyFields: {
+                                token: { type: "string", description: "CoinGecko token ID (e.g., bitcoin, ethereum)" },
+                                timeframe: { type: "string", description: "Analysis period in days: 1, 7, 14, or 30" }
                             },
                             required: ["token"]
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, rsi: 55, trend: "up", momentum: "bullish", recommendation: "HOLD" } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                rsi: { type: "number", description: "Relative Strength Index 0-100" },
+                                trend: { type: "string", description: "Price trend direction" },
+                                momentum: { type: "string", description: "Market momentum" },
+                                recommendation: { type: "string", description: "Trading recommendation" }
+                            },
+                            example: { success: true, rsi: 55, trend: "up", momentum: "bullish", recommendation: "HOLD" }
+                        }
+                    }
                 },
                 "POST /api/v1/swap": {
                     price: "$0.50",
                     network: network as any,
                     config: {
-                        description: "Execute swap on Silverback DEX"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenIn: "USDC", tokenOut: "WETH", amountIn: "100" },
+                        description: "Execute swap on Silverback DEX",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                tokenIn: { type: "string", description: "Token to sell" },
-                                tokenOut: { type: "string", description: "Token to buy" },
+                            bodyType: "json",
+                            bodyFields: {
+                                tokenIn: { type: "string", description: "Token to sell (symbol or address)" },
+                                tokenOut: { type: "string", description: "Token to buy (symbol or address)" },
                                 amountIn: { type: "string", description: "Amount to swap" },
-                                slippage: { type: "string", description: "Slippage tolerance %" }
+                                slippage: { type: "string", description: "Slippage tolerance % (default: 0.5)" }
                             },
                             required: ["tokenIn", "tokenOut", "amountIn"]
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, txHash: "0x...", sold: "100 USDC", received: "0.028 WETH" } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                txHash: { type: "string", description: "Transaction hash" },
+                                sold: { type: "string", description: "Amount sold" },
+                                received: { type: "string", description: "Amount received" }
+                            },
+                            example: { success: true, txHash: "0x...", sold: "100 USDC", received: "0.028 WETH" }
+                        }
+                    }
                 },
                 "GET /api/v1/dex-metrics": {
                     price: "$0.05",
                     network: network as any,
                     config: {
-                        description: "Overall DEX statistics and metrics"
-                    },
-                    ...declareDiscoveryExtension({
-                        output: { example: { pairCount: 150, ethPrice: "$3500", tvl: "$5.2M" } }
-                    })
+                        description: "Overall DEX statistics and metrics",
+                        mimeType: "application/json",
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                data: {
+                                    type: "object",
+                                    properties: {
+                                        network: { type: "string" },
+                                        aggregator: { type: "string" },
+                                        routing: { type: "object" }
+                                    }
+                                }
+                            },
+                            example: { success: true, data: { network: "Base", aggregator: "OpenOcean", tvl: "$5.2M" } }
+                        }
+                    }
                 },
                 "POST /api/v1/backtest": {
                     price: "$1.00",
                     network: network as any,
                     config: {
-                        description: "Run strategy backtest on historical data"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "bitcoin", strategy: "sma_crossover", days: 30 },
+                        description: "Run strategy backtest on historical data",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "CoinGecko token ID" },
-                                strategy: { type: "string", description: "Strategy type" },
-                                days: { type: "number", description: "Backtest period" }
+                            bodyType: "json",
+                            bodyFields: {
+                                token: { type: "string", description: "CoinGecko token ID (e.g., bitcoin)" },
+                                strategy: { type: "string", description: "Strategy: momentum or mean_reversion" },
+                                days: { type: "number", description: "Backtest period in days (default: 30)" }
                             },
                             required: ["token", "strategy"]
                         },
-                        bodyType: "json",
-                        output: { example: { totalReturn: "15.5%", winRate: 0.65, sharpeRatio: 1.8 } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                data: {
+                                    type: "object",
+                                    properties: {
+                                        totalReturn: { type: "string" },
+                                        winRate: { type: "number" },
+                                        sharpeRatio: { type: "number" }
+                                    }
+                                }
+                            },
+                            example: { success: true, data: { totalReturn: "15.5%", winRate: 0.65, sharpeRatio: 1.8 } }
+                        }
+                    }
                 },
                 "POST /api/v1/defi-yield": {
                     price: "$0.05",
                     network: network as any,
                     config: {
-                        description: "DeFi yield opportunities for any token on Base"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "USDC", riskTolerance: "medium" },
+                        description: "DeFi yield opportunities for any token on Base",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "Token symbol or address" },
-                                riskTolerance: { type: "string", description: "low, medium, or high" }
+                            bodyType: "json",
+                            bodyFields: {
+                                token: { type: "string", description: "Token symbol (USDC, WETH) or address" },
+                                riskTolerance: { type: "string", description: "Risk level: low, medium, or high" }
                             },
                             required: ["token"]
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, totalOpportunities: 5, bestApr: "12.5%", opportunities: [] } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                totalOpportunities: { type: "number" },
+                                bestApr: { type: "string" },
+                                opportunities: { type: "array" }
+                            },
+                            example: { success: true, totalOpportunities: 5, bestApr: "12.5%", opportunities: [] }
+                        }
+                    }
                 },
                 "POST /api/v1/lp-analysis": {
                     price: "$0.05",
                     network: network as any,
                     config: {
-                        description: "LP position analysis for token pairs"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenPair: "USDC/WETH" },
+                        description: "LP position analysis for token pairs",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                tokenPair: { type: "string", description: "e.g., USDC/WETH" },
-                                tokenA: { type: "string" },
-                                tokenB: { type: "string" }
+                            bodyType: "json",
+                            bodyFields: {
+                                tokenPair: { type: "string", description: "Token pair e.g., USDC/WETH" },
+                                tokenA: { type: "string", description: "First token symbol" },
+                                tokenB: { type: "string", description: "Second token symbol" }
                             }
                         },
-                        bodyType: "json",
-                        output: { example: { success: true, positions: [], summary: { totalValue: "$10,000", weightedApr: "8.5%" } } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                positions: { type: "array" },
+                                summary: { type: "object" }
+                            },
+                            example: { success: true, positions: [], summary: { totalValue: "$10,000", weightedApr: "8.5%" } }
+                        }
+                    }
                 },
                 "GET /api/v1/top-pools": {
                     price: "$0.03",
                     network: network as any,
                     config: {
-                        description: "Top yielding pools on Base DEXes"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, minTvl: 100000 },
+                        description: "Top yielding pools on Base DEXes",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of pools (1-20)" },
-                                minTvl: { type: "number", description: "Minimum TVL in USD" }
+                            queryParams: {
+                                limit: { type: "number", description: "Number of pools (1-20, default: 10)" },
+                                minTvl: { type: "number", description: "Minimum TVL in USD (default: 100000)" }
                             }
                         },
-                        output: { example: { success: true, topPools: [{ name: "USDC/WETH", apr: "15.2%", tvl: "$2.5M" }] } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                topPools: { type: "array" }
+                            },
+                            example: { success: true, topPools: [{ name: "USDC/WETH", apr: "15.2%", tvl: "$2.5M" }] }
+                        }
+                    }
                 },
                 "GET /api/v1/top-protocols": {
                     price: "$0.03",
                     network: network as any,
                     config: {
-                        description: "Top DeFi protocols by TVL"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, chain: "base" },
+                        description: "Top DeFi protocols by TVL",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of protocols (1-50)" },
-                                chain: { type: "string", description: "base, ethereum, arbitrum, or all" },
-                                category: { type: "string", description: "dex, lending, bridge, etc." }
+                            queryParams: {
+                                limit: { type: "number", description: "Number of protocols (1-50, default: 10)" },
+                                chain: { type: "string", description: "Chain: base, ethereum, arbitrum, or all" },
+                                category: { type: "string", description: "Category: dex, lending, bridge, etc." }
                             }
                         },
-                        output: { example: { success: true, topProtocols: [{ name: "Aerodrome", tvl: "$1.2B", category: "DEX" }] } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                topProtocols: { type: "array" }
+                            },
+                            example: { success: true, topProtocols: [{ name: "Aerodrome", tvl: "$1.2B", category: "DEX" }] }
+                        }
+                    }
                 },
                 "GET /api/v1/top-coins": {
                     price: "$0.03",
                     network: network as any,
                     config: {
-                        description: "Top cryptocurrencies by market cap"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, chain: "all" },
+                        description: "Top cryptocurrencies by market cap",
+                        mimeType: "application/json",
                         inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of coins (1-50)" },
-                                chain: { type: "string", description: "base, ethereum, or all" }
+                            queryParams: {
+                                limit: { type: "number", description: "Number of coins (1-50, default: 10)" },
+                                chain: { type: "string", description: "Chain: base, ethereum, or all" }
                             }
                         },
-                        output: { example: { success: true, topCoins: [{ rank: 1, name: "Bitcoin", symbol: "BTC", price: "$95,000", marketCap: "$1.9T" }] } }
-                    })
+                        outputSchema: {
+                            type: "object",
+                            properties: {
+                                success: { type: "boolean" },
+                                topCoins: { type: "array" }
+                            },
+                            example: { success: true, topCoins: [{ rank: 1, name: "Bitcoin", symbol: "BTC", price: "$95,000", marketCap: "$1.9T" }] }
+                        }
+                    }
                 }
             },
             facilitatorConfig  // Use CDP mainnet facilitator

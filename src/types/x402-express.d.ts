@@ -14,7 +14,9 @@ declare module 'x402-express' {
             description?: string;
             mimeType?: string;
             maxTimeoutSeconds?: number;
+            inputSchema?: Record<string, unknown>;
             outputSchema?: Record<string, unknown>;
+            discoverable?: boolean;
             customPaywallHtml?: string;
             resource?: string;
         };
