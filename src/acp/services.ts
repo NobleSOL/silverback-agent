@@ -1773,15 +1773,42 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
         const slippageBps = Math.floor(slippagePercent * 100);
 
         console.log(`[ExecuteSwapWithFunds] ${amountIn} ${symbolIn} -> ${symbolOut} for buyer ${recipientAddress}`);
+        console.log(`[ExecuteSwapWithFunds] Wallet address: ${wallet.address}`);
 
         // Check if we have the tokens (should have been received from buyer)
+        // Use retry logic for RPC reliability
         const tokenInContract = new ethers.Contract(tokenInAddress, ERC20_ABI, provider);
-        const balance = await tokenInContract.balanceOf(wallet.address) as bigint;
+        let balance: bigint = 0n;
+        let balanceRetries = 0;
+        const maxBalanceRetries = 3;
+
+        while (balanceRetries < maxBalanceRetries) {
+            try {
+                balance = await tokenInContract.balanceOf(wallet.address) as bigint;
+                console.log(`[ExecuteSwapWithFunds] Balance check (attempt ${balanceRetries + 1}): ${ethers.formatUnits(balance, decimalsIn)} ${symbolIn}`);
+
+                // If we got a non-zero balance or it's the last retry, break
+                if (balance > 0n || balanceRetries === maxBalanceRetries - 1) {
+                    break;
+                }
+
+                // Wait a bit and retry if balance is 0 (could be RPC issue)
+                console.log(`[ExecuteSwapWithFunds] Balance returned 0, retrying in 2s...`);
+                await new Promise(r => setTimeout(r, 2000));
+                balanceRetries++;
+            } catch (balanceErr: any) {
+                console.error(`[ExecuteSwapWithFunds] Balance check error (attempt ${balanceRetries + 1}):`, balanceErr.message);
+                balanceRetries++;
+                if (balanceRetries < maxBalanceRetries) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+        }
 
         if (balance < amountInWei) {
             return {
                 success: false,
-                error: `Insufficient ${symbolIn} balance. Expected ${amountIn}, have ${ethers.formatUnits(balance, decimalsIn)}`
+                error: `Insufficient ${symbolIn} balance. Expected ${amountIn}, have ${ethers.formatUnits(balance, decimalsIn)}. Wallet: ${wallet.address}`
             };
         }
 
