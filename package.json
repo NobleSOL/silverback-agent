@@ -39,6 +39,9 @@
     "@virtuals-protocol/game-telegram-plugin": "^0.1.4",
     "@virtuals-protocol/game-twitter-node": "^0.1.4",
     "@virtuals-protocol/game-twitter-plugin": "^0.1.11",
+    "@x402/core": "^2.0.0",
+    "@x402/evm": "^2.0.0",
+    "@x402/express": "^2.0.0",
     "@x402/extensions": "^2.0.0",
     "better-sqlite3": "^12.5.0",
     "dotenv": "^16.4.7",
@@ -46,9 +49,7 @@
     "express": "^5.2.1",
     "jose": "^6.1.3",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.16.3",
-    "x402": "^1.0.1",
-    "x402-express": "^1.0.0"
+    "pg": "^8.16.3"
   },
   "overrides": {
     "viem": "2.21.49"
