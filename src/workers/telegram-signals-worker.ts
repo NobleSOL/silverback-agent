@@ -385,16 +385,22 @@ export const sendMarketAlertFunction = new GameFunction({
                 confidenceBadge = '📊 Market Watch';
             }
 
+            // Escape special Markdown characters in user input
+            const safeAsset = (args.asset || 'MARKET').replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+            const safeDetails = (args.details || 'No details provided').replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+            const safeAnalysis = (args.analysis || 'Monitoring situation').replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+            const safeAlertType = (args.alert_type || 'ALERT').toUpperCase();
+
             const message = `
-${emoji} **${args.alert_type?.toUpperCase()} ALERT** - ${args.asset || 'MARKET'}
+${emoji} ${safeAlertType} ALERT - ${safeAsset}
 
-${args.details || 'No details provided'}
+${safeDetails}
 
-**Analysis:** ${args.analysis || 'Monitoring situation'}
+Analysis: ${safeAnalysis}
 
 ---
 ${confidenceBadge}
-_Win Rate: ${winRate}% | Trades: ${state.metrics.totalTrades}_
+Win Rate: ${winRate}% | Trades: ${state.metrics.totalTrades}
 🦍 Silverback Intelligence
             `.trim();
 
@@ -405,8 +411,7 @@ _Win Rate: ${winRate}% | Trades: ${state.metrics.totalTrades}_
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         chat_id: process.env.TELEGRAM_CHAT_ID,
-                        text: message,
-                        parse_mode: 'Markdown'
+                        text: message
                     })
                 }
             );
@@ -459,26 +464,26 @@ export const sendDailySummaryFunction = new GameFunction({
             const state = stateManager.getState();
 
             const message = `
-📊 **SILVERBACK DAILY SUMMARY**
+📊 SILVERBACK DAILY SUMMARY
 
-**Learning Progress:**
+Learning Progress:
 • Total Trades: ${state.metrics.totalTrades}
 • Win Rate: ${(state.metrics.winRate * 100).toFixed(1)}%
 • Total P&L: $${state.metrics.totalPnL.toFixed(2)}
 • Best Strategy: ${state.insights.bestPerformingStrategy}
 
-**Market Summary:**
+Market Summary:
 ${args.market_summary || 'No summary provided'}
 
-**Key Observations:**
+Key Observations:
 ${args.key_observations || 'No observations'}
 
-**Top Success Pattern:**
+Top Success Pattern:
 ${state.insights.successPatterns[0] || 'Still learning patterns'}
 
 ---
-🦍 _Silverback DeFi Intelligence_
-_Building toward 70% win rate target_
+🦍 Silverback DeFi Intelligence
+Building toward 70% win rate target
             `.trim();
 
             const response = await fetch(
@@ -488,8 +493,7 @@ _Building toward 70% win rate target_
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         chat_id: process.env.TELEGRAM_CHAT_ID,
-                        text: message,
-                        parse_mode: 'Markdown'
+                        text: message
                     })
                 }
             );
