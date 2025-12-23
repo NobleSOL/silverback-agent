@@ -23,11 +23,30 @@ async function main() {
     // Check configuration
     if (!isAcpConfigured()) {
         console.error("❌ ACP not configured. Required environment variables:");
-        console.error("   - ACP_AGENT_WALLET_ADDRESS");
+        console.error("   Core:");
+        console.error("   - ACP_AGENT_WALLET_ADDRESS (smart account)");
         console.error("   - ACP_PRIVATE_KEY or WHITELISTED_WALLET_PRIVATE_KEY");
         console.error("   - ACP_ENTITY_ID");
+        console.error("   - API_KEY (GAME API key)");
+        console.error("");
+        console.error("   For Swap Execution:");
+        console.error("   - ACP_SWAP_WALLET_ADDRESS (EOA for receiving funds)");
+        console.error("   - SWAP_EXECUTOR_PRIVATE_KEY (private key for swap wallet)");
         process.exit(1);
     }
+
+    // Log configuration status
+    const swapWallet = process.env.ACP_SWAP_WALLET_ADDRESS || process.env.ACP_AGENT_WALLET_ADDRESS;
+    const hasSwapKey = !!(process.env.SWAP_EXECUTOR_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || process.env.ACP_PRIVATE_KEY);
+    const hasCdpApi = !!(process.env.CDP_API_KEY && process.env.CDP_API_SECRET);
+
+    console.log("📋 Configuration:");
+    console.log(`   Agent Wallet: ${process.env.ACP_AGENT_WALLET_ADDRESS}`);
+    console.log(`   Swap Wallet: ${swapWallet}`);
+    console.log(`   Swap Key: ${hasSwapKey ? '✅ configured' : '❌ missing'}`);
+    console.log(`   Entity ID: ${process.env.ACP_ENTITY_ID}`);
+    console.log(`   Cluster: ${process.env.ACP_CLUSTER || 'defi'}`);
+    console.log(`   CDP API: ${hasCdpApi ? '✅ configured (swaps via CDP)' : '⚠️ missing (will use OpenOcean fallback)'}\n`);
 
     // Initialize ACP
     console.log("🔗 Initializing ACP...");
