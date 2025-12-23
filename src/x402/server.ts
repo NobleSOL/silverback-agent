@@ -20,7 +20,8 @@ import { HTTPFacilitatorClient } from '@x402/core/server';
 import { registerExactEvmScheme } from '@x402/evm/exact/server';
 // @ts-ignore - ESM module with our type declarations
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from '@x402/extensions/bazaar';
-import { SignJWT, importPKCS8 } from 'jose';
+import { SignJWT } from 'jose';
+import * as crypto from 'crypto';
 
 // Import existing ACP service handlers - already production-ready
 import {
@@ -72,6 +73,9 @@ const NETWORK_CAIP2 = X402_NETWORK === 'base' ? 'eip155:8453' : 'eip155:84532';
 /**
  * Generate a JWT token for CDP API authentication
  * Based on CDP SDK implementation
+ *
+ * CDP API key secret format: EC PRIVATE KEY in PEM format
+ * Example: -----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----
  */
 async function generateCdpJwt(method: string, host: string, path: string): Promise<string> {
     if (!CDP_API_KEY_ID || !CDP_API_KEY_SECRET) {
@@ -81,35 +85,44 @@ async function generateCdpJwt(method: string, host: string, path: string): Promi
     const now = Math.floor(Date.now() / 1000);
     const nonce = crypto.randomUUID();
 
-    // Parse the EC private key (CDP uses ES256)
-    let privateKey: Awaited<ReturnType<typeof importPKCS8>>;
     try {
-        // CDP API key secret is in PEM format
-        if (CDP_API_KEY_SECRET.includes('-----BEGIN')) {
-            privateKey = await importPKCS8(CDP_API_KEY_SECRET, 'ES256');
-        } else {
-            // Try as raw base64
-            const keyBuffer = Buffer.from(CDP_API_KEY_SECRET, 'base64');
-            privateKey = await importPKCS8(
-                `-----BEGIN PRIVATE KEY-----\n${keyBuffer.toString('base64')}\n-----END PRIVATE KEY-----`,
-                'ES256'
-            );
+        // CDP uses EC PRIVATE KEY format (SEC1), not PKCS8
+        // The key may have escaped newlines (\n) that need to be converted to actual newlines
+        let pemKey = CDP_API_KEY_SECRET;
+
+        // Handle escaped newlines from environment variables
+        if (pemKey.includes('\\n')) {
+            pemKey = pemKey.replace(/\\n/g, '\n');
         }
+
+        // Ensure proper PEM format
+        if (!pemKey.includes('-----BEGIN')) {
+            // If raw base64, wrap in EC PRIVATE KEY PEM format
+            pemKey = `-----BEGIN EC PRIVATE KEY-----\n${pemKey}\n-----END EC PRIVATE KEY-----`;
+        }
+
+        // Use Node.js crypto to create the key object
+        // jose's importPKCS8 doesn't support SEC1 EC keys directly
+        const keyObject = crypto.createPrivateKey({
+            key: pemKey,
+            format: 'pem'
+        });
+
+        const jwt = await new SignJWT({
+            sub: CDP_API_KEY_ID,
+            iss: 'cdp',
+            nbf: now,
+            exp: now + 120, // 2 minute expiry
+            uris: [`${method.toUpperCase()} ${host}${path}`],
+        })
+            .setProtectedHeader({ alg: 'ES256', kid: CDP_API_KEY_ID, nonce, typ: 'JWT' })
+            .sign(keyObject);
+
+        return jwt;
     } catch (e) {
+        console.error('CDP key parse error:', e);
         throw new Error(`Failed to parse CDP API key: ${e}`);
     }
-
-    const jwt = await new SignJWT({
-        sub: CDP_API_KEY_ID,
-        iss: 'cdp',
-        nbf: now,
-        exp: now + 120, // 2 minute expiry
-        uris: [`${method.toUpperCase()} ${host}${path}`],
-    })
-        .setProtectedHeader({ alg: 'ES256', kid: CDP_API_KEY_ID, nonce, typ: 'JWT' })
-        .sign(privateKey);
-
-    return jwt;
 }
 
 /**
