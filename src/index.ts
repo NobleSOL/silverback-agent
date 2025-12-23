@@ -1,7 +1,13 @@
+/**
+ * Silverback Agent - Twitter/GAME Service
+ *
+ * Handles Twitter posting and GAME agent functionality.
+ * ACP job processing runs as a separate service (npm run start:acp)
+ * x402 payments runs as a separate service (npm run start:x402)
+ */
+
 import { createSilverbackAgent } from './agent';
 import { stateManager } from './state/state-manager';
-import { initializeAcp, isAcpConfigured, getAcpPlugin } from './acp';
-import { GameWorker } from '@virtuals-protocol/game';
 
 // Rate limiting configuration - IMPORTANT: Keep this high to avoid tweet spam
 const STEP_INTERVAL_MS = parseInt(process.env.STEP_INTERVAL_MS || '300000'); // Default: 5 minutes between steps
@@ -9,7 +15,7 @@ const MAX_CONSECUTIVE_ERRORS = parseInt(process.env.MAX_ERRORS || '10');
 
 async function main() {
     try {
-        console.log("🦍 Initializing Silverback...\n");
+        console.log("🦍 Initializing Silverback Twitter Agent...\n");
 
         // Load state before agent starts
         console.log("📊 Loading agent state...");
@@ -20,37 +26,14 @@ async function main() {
         console.log(`   Win Rate: ${(state.metrics.winRate * 100).toFixed(1)}%`);
         console.log(`   Total PnL: $${state.metrics.totalPnL.toFixed(2)}\n`);
 
-        // NOTE: x402 server runs as a separate service (start:x402 / standalone.ts)
-        // Do NOT start it here - the agent service handles Twitter/ACP only
+        // NOTE: ACP runs as a separate service (npm run start:acp)
+        // NOTE: x402 runs as a separate service (npm run start:x402)
+        console.log("ℹ️  This service handles Twitter/GAME only");
+        console.log("   ACP jobs: Run separately with 'npm run start:acp'");
+        console.log("   x402 payments: Run separately with 'npm run start:x402'\n");
 
-        // Initialize ACP if configured and get worker
-        let acpWorker: GameWorker | undefined;
-        if (isAcpConfigured()) {
-            console.log("🔗 ACP credentials detected, initializing...");
-            const acpPlugin = await initializeAcp();
-            if (acpPlugin) {
-                acpWorker = acpPlugin.getWorker({
-                    getEnvironment: async () => ({
-                        silverback_services: [
-                            { name: "getSwapQuote", price: "$0.02 USDC", description: "Get optimal swap route with price impact" },
-                            { name: "getPoolAnalysis", price: "$0.10 USDC", description: "Comprehensive liquidity pool analysis" },
-                            { name: "getTechnicalAnalysis", price: "$0.25 USDC", description: "Full TA with indicators and patterns" },
-                            { name: "executeSwap", price: "$0.50 USDC", description: "Execute swap on Silverback DEX" }
-                        ],
-                        chains_supported: ["Base", "Keeta"],
-                        dex_url: "https://silverbackdefi.app",
-                        router: "0x565cBf0F3eAdD873212Db91896e9a548f6D64894"
-                    })
-                });
-                console.log("📦 ACP worker created successfully");
-            }
-        } else {
-            console.log("ℹ️  ACP not configured - skipping ACP integration");
-            console.log("   To enable: Set ACP_AGENT_WALLET_ADDRESS, ACP_PRIVATE_KEY, ACP_ENTITY_ID\n");
-        }
-
-        // Create the agent with ACP worker if available
-        const silverback_agent = createSilverbackAgent(acpWorker);
+        // Create the agent WITHOUT ACP worker (ACP is separate now)
+        const silverback_agent = createSilverbackAgent();
 
         // Initialize the agent with retry for rate limits
         let initRetries = 0;
@@ -70,138 +53,23 @@ async function main() {
             }
         }
 
-        console.log("✅ Silverback initialized successfully!");
-        console.log(`🔄 Running with ${STEP_INTERVAL_MS/1000}s interval between steps...`);
-        if (acpWorker) {
-            console.log("🔗 ACP Provider mode: ACTIVE - Ready to accept jobs\n");
-        } else {
-            console.log("")
-        }
-
-        // ACP polling interval - check for jobs frequently when ACP is enabled
-        // Default: 10 seconds (configurable via ACP_POLL_INTERVAL_MS env var)
-        const ACP_POLL_INTERVAL_MS = parseInt(process.env.ACP_POLL_INTERVAL_MS || '10000');
+        console.log("✅ Silverback Twitter Agent initialized!");
+        console.log(`🔄 Running with ${STEP_INTERVAL_MS/1000}s interval between steps...\n`);
 
         // Run the agent with rate limiting and retry logic
         let consecutiveErrors = 0;
         let stepCount = 0;
-        let lastFullStep = Date.now();
 
         while (true) {
             try {
-                const now = Date.now();
-                const timeSinceLastStep = now - lastFullStep;
+                stepCount++;
+                console.log(`\n📍 Step ${stepCount} starting...`);
+                await silverback_agent.step({ verbose: true });
+                consecutiveErrors = 0;
 
-                // Check if ACP has pending jobs - if so, run a quick step
-                let hasAcpJobs = false;
-                if (acpWorker) {
-                    try {
-                        const acpPlugin = getAcpPlugin();
-                        if (acpPlugin) {
-                            console.log(`🔍 Polling ACP for jobs...`);
-                            const acpState = await acpPlugin.getAcpState();
+                console.log(`⏳ Waiting ${STEP_INTERVAL_MS/1000}s before next step...`);
+                await new Promise(r => setTimeout(r, STEP_INTERVAL_MS));
 
-                            // Log ACP state for debugging
-                            const sellerJobs = acpState.jobs?.active?.asASeller || [];
-                            const buyerJobs = acpState.jobs?.active?.asABuyer || [];
-                            const completedJobs = acpState.jobs?.completed || [];
-                            const cancelledJobs = acpState.jobs?.cancelled || [];
-                            console.log(`   Active: ${sellerJobs.length} seller, ${buyerJobs.length} buyer | Completed: ${completedJobs.length} | Cancelled: ${cancelledJobs.length}`);
-
-                            // Try direct API fetch for active jobs
-                            const { getAcpClient } = await import('./acp');
-                            const client = getAcpClient();
-                            if (client && (client as any).getActiveJobs) {
-                                try {
-                                    const activeJobs = await (client as any).getActiveJobs(1, 10);
-                                    console.log(`   Direct API: ${activeJobs?.length || 0} active jobs`, activeJobs?.map((j: any) => j.id || j.jobId));
-                                } catch (e: any) {
-                                    console.log(`   Direct API error: ${e.message}`);
-                                }
-                            }
-
-                            if (sellerJobs.length > 0) {
-                                for (const j of sellerJobs) {
-                                    const job = j as any;
-                                    const jobId = job.id || job.jobId;
-                                    const phase = job.phase;
-                                    console.log(`   Job ${jobId}: phase=${phase}`);
-
-                                    // If job is in 'request' phase, we need to accept it
-                                    if (phase === 'request') {
-                                        console.log(`   🔄 Attempting to accept job ${jobId}...`);
-                                        try {
-                                            // Get the job's service requirement - handle various nested structures
-                                            const desc = job.desc || {};
-                                            const jobRequirement = desc.requirement || job.serviceRequirement || job.requirement || {};
-
-                                            // Service name can be in desc.name or inside the requirement object
-                                            let serviceName = desc.name || jobRequirement.name || 'unknown';
-                                            // The actual parameters are in requirement.requirement or just requirement
-                                            let serviceParams = jobRequirement.requirement || jobRequirement;
-
-                                            // If serviceName is still unknown, try to infer from params
-                                            if (serviceName === 'unknown' && serviceParams.tokenIn && serviceParams.tokenOut) {
-                                                serviceName = 'getSwapQuote';
-                                            }
-
-                                            console.log(`   Service: ${serviceName}`);
-                                            console.log(`   Params:`, JSON.stringify(serviceParams).substring(0, 200));
-
-                                            // Skip processing if service is still unknown - ACP callback will handle it
-                                            if (serviceName === 'unknown') {
-                                                console.log(`   ⏳ Service not yet available, waiting for ACP callback...`);
-                                                continue;
-                                            }
-
-                                            // Process the service
-                                            const { processServiceRequest } = await import('./acp/services');
-                                            const result = await processServiceRequest(serviceName, JSON.stringify(serviceParams));
-
-                                            console.log(`   ✅ Service processed:`, result.deliverable?.substring(0, 200));
-
-                                            // Try to respond via job.respond() if available
-                                            if (typeof job.respond === 'function') {
-                                                await job.respond(true, result.deliverable);
-                                                console.log(`   ✅ Job ${jobId} accepted and delivered`);
-                                            } else {
-                                                console.log(`   ⚠️ job.respond() not available - checking ACP client methods`);
-                                                const { getAcpClient } = await import('./acp');
-                                                const client = getAcpClient();
-                                                if (client) {
-                                                    console.log(`   ACP Client methods:`, Object.keys(client).filter(k => typeof (client as any)[k] === 'function'));
-                                                }
-                                            }
-                                        } catch (err: any) {
-                                            console.error(`   ❌ Failed to process job ${jobId}:`, err.message);
-                                        }
-                                    }
-                                }
-                            }
-                            hasAcpJobs = sellerJobs.length > 0;
-                        }
-                    } catch (acpErr) {
-                        console.log(`⚠️ ACP state check error:`, acpErr);
-                    }
-                }
-
-                // Run step if: time for scheduled step OR we have ACP jobs waiting
-                if (timeSinceLastStep >= STEP_INTERVAL_MS || hasAcpJobs) {
-                    stepCount++;
-                    console.log(`\n📍 Step ${stepCount} starting...${hasAcpJobs ? ' (ACP job trigger)' : ''}`);
-                    await silverback_agent.step({ verbose: true });
-                    consecutiveErrors = 0;
-                    lastFullStep = Date.now();
-
-                    // Normal wait after step
-                    if (!hasAcpJobs) {
-                        console.log(`⏳ Waiting ${STEP_INTERVAL_MS/1000}s before next step...`);
-                    }
-                }
-
-                // Wait before next check - shorter if ACP is active
-                const waitTime = acpWorker ? ACP_POLL_INTERVAL_MS : STEP_INTERVAL_MS;
-                await new Promise(r => setTimeout(r, hasAcpJobs ? 5000 : waitTime));
             } catch (stepError: any) {
                 consecutiveErrors++;
                 const isRateLimit = stepError.message?.includes('Too Many Requests') || stepError.message?.includes('429');
@@ -228,4 +96,17 @@ async function main() {
     }
 }
 
-main(); 
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+    console.log("\n🛑 Shutting down Silverback...");
+    stateManager.close();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log("\n🛑 Received SIGTERM, shutting down...");
+    stateManager.close();
+    process.exit(0);
+});
+
+main();
