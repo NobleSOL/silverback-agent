@@ -6,7 +6,7 @@ import { GameWorker } from '@virtuals-protocol/game';
 
 // Rate limiting configuration - IMPORTANT: Keep this high to avoid tweet spam
 const STEP_INTERVAL_MS = parseInt(process.env.STEP_INTERVAL_MS || '300000'); // Default: 5 minutes between steps
-const MAX_CONSECUTIVE_ERRORS = parseInt(process.env.MAX_ERRORS || '5');
+const MAX_CONSECUTIVE_ERRORS = parseInt(process.env.MAX_ERRORS || '10');
 
 async function main() {
     try {
