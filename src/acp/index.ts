@@ -344,16 +344,24 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
             const provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
             const wallet = new ethers.Wallet(SWAP_PRIVATE_KEY, provider);
 
-            // Get token decimals
+            // Get token contract and check actual balance to transfer
             const tokenContract = new ethers.Contract(
                 tokenOutAddress,
-                ['function transfer(address to, uint256 amount) returns (bool)', 'function decimals() view returns (uint8)'],
+                ['function transfer(address to, uint256 amount) returns (bool)', 'function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)'],
                 wallet
             );
             const decimals = await tokenContract.decimals();
-            const amountWei = ethers.parseUnits(swapResult.data?.actualOutput || '0', decimals);
 
-            console.log(`   📤 Transferring ${outputAmount} ${tokenOut} to buyer ${job.clientAddress}...`);
+            // Use actual wallet balance instead of reported output to avoid precision issues
+            const actualBalance = await tokenContract.balanceOf(wallet.address) as bigint;
+            const reportedAmountWei = ethers.parseUnits(swapResult.data?.actualOutput || '0', decimals);
+
+            // Transfer the lesser of reported amount or actual balance (safety check)
+            const amountWei = actualBalance < reportedAmountWei ? actualBalance : reportedAmountWei;
+            const amountHuman = ethers.formatUnits(amountWei, decimals);
+
+            console.log(`   📤 Transferring ${amountHuman} ${tokenOut} to buyer ${job.clientAddress}...`);
+            console.log(`   (Wallet balance: ${ethers.formatUnits(actualBalance, decimals)}, Reported: ${swapResult.data?.actualOutput})`);
             const transferTx = await tokenContract.transfer(job.clientAddress, amountWei);
             const transferReceipt = await transferTx.wait();
             console.log(`   ✅ Transfer to buyer confirmed: ${transferReceipt.hash}`);
@@ -363,7 +371,7 @@ async function handleTransactionPhase(job: AcpJob, jobName: string) {
                 value: {
                     txHash: transferReceipt.hash,
                     sold: `${netAmount} ${tokenIn}`,
-                    received: `${outputAmount} ${tokenOut}`,
+                    received: `${amountHuman} ${tokenOut}`,
                     executionPrice: swapResult.data?.executionPrice,
                     recipient: job.clientAddress
                 }

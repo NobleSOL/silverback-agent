@@ -1787,6 +1787,11 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
             try {
                 const cdpJwt = generateCdpJwt('POST', '/platform/v2/evm/swaps');
                 if (cdpJwt) {
+                    // Get output token balance BEFORE swap to calculate actual output later
+                    const tokenOutContractRead = new ethers.Contract(tokenOutAddress, ERC20_ABI, provider);
+                    const balanceOutBefore = await tokenOutContractRead.balanceOf(wallet.address) as bigint;
+                    console.log(`[ExecuteSwapWithFunds] Balance before: ${ethers.formatUnits(balanceOutBefore, decimalsOut)} ${symbolOut}`);
+
                     // Check Permit2 allowance and approve if needed
                     const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
                     const currentAllowance = await tokenInContract.allowance(wallet.address, PERMIT2_ADDRESS) as bigint;
@@ -1859,7 +1864,11 @@ export async function handleExecuteSwapWithFunds(input: ExecuteSwapWithFundsInpu
                             const receipt = await swapTx.wait();
                             console.log(`[ExecuteSwapWithFunds] Swap confirmed!`);
 
-                            const amountOutHuman = ethers.formatUnits(cdpData.toAmount, decimalsOut);
+                            // Get actual output by comparing balance before/after (handles slippage correctly)
+                            const balanceOutAfter = await tokenOutContractRead.balanceOf(wallet.address) as bigint;
+                            const actualOutputWei = balanceOutAfter - balanceOutBefore;
+                            const amountOutHuman = ethers.formatUnits(actualOutputWei, decimalsOut);
+                            console.log(`[ExecuteSwapWithFunds] Actual output: ${amountOutHuman} ${symbolOut} (balance: ${ethers.formatUnits(balanceOutAfter, decimalsOut)})`);
                             const executionPrice = (parseFloat(amountIn) / parseFloat(amountOutHuman)).toFixed(8);
 
                             // Swap complete - tokens are now in our EOA wallet
