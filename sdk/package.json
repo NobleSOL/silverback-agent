@@ -1,0 +1,47 @@
+{
+  "name": "@silverback/defi-client",
+  "version": "1.0.0",
+  "description": "JavaScript/TypeScript SDK for Silverback DEX Intelligence API with x402 payments",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "silverback",
+    "defi",
+    "dex",
+    "x402",
+    "base",
+    "usdc",
+    "api-client",
+    "cryptocurrency",
+    "trading"
+  ],
+  "author": "Silverback DEX",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/silverbackdefi/sdk"
+  },
+  "homepage": "https://x402.silverbackdefi.app/api-docs",
+  "bugs": {
+    "url": "https://github.com/silverbackdefi/sdk/issues"
+  },
+  "dependencies": {
+    "x402": "^1.0.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

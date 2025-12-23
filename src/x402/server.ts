@@ -16,6 +16,9 @@ import { paymentMiddleware } from 'x402-express';
 // @ts-ignore - module resolution issue with x402 extensions
 import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { SignJWT, importPKCS8 } from 'jose';
+import swaggerUi from 'swagger-ui-express';
+import path from 'path';
+import fs from 'fs';
 
 // Import existing ACP service handlers - already production-ready
 import {
@@ -388,6 +391,46 @@ function initializeServer() {
 // Initialize the server
 initializeServer();
 
+// === SWAGGER UI DOCUMENTATION ===
+
+// Load OpenAPI spec
+let openApiSpec: any;
+try {
+    // Try to load from dist (production) first, then src (development)
+    const distPath = path.join(__dirname, 'openapi.json');
+    const srcPath = path.join(__dirname, '..', '..', 'src', 'x402', 'openapi.json');
+
+    if (fs.existsSync(distPath)) {
+        openApiSpec = JSON.parse(fs.readFileSync(distPath, 'utf8'));
+    } else if (fs.existsSync(srcPath)) {
+        openApiSpec = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
+    } else {
+        console.warn('⚠️  OpenAPI spec not found - Swagger UI disabled');
+    }
+} catch (error) {
+    console.warn('⚠️  Failed to load OpenAPI spec:', error);
+}
+
+// Serve Swagger UI at /api-docs
+if (openApiSpec) {
+    const swaggerOptions = {
+        customCss: `
+            .swagger-ui .topbar { display: none }
+            .swagger-ui .info .title { color: #4a5568 }
+            .swagger-ui .scheme-container { background: #f7fafc; padding: 15px; }
+        `,
+        customSiteTitle: 'Silverback DEX API Documentation',
+        customfavIcon: 'https://silverbackdefi.app/favicon.ico'
+    };
+
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec, swaggerOptions));
+
+    // Also serve raw OpenAPI spec
+    app.get('/api/v1/openapi.json', (_req: Request, res: Response) => {
+        res.json(openApiSpec);
+    });
+}
+
 // === FREE ENDPOINTS ===
 
 /**
@@ -412,11 +455,16 @@ app.get('/health', (_req: Request, res: Response) => {
 /**
  * Service pricing info - helps discovery
  */
-app.get('/api/v1/pricing', (_req: Request, res: Response) => {
+app.get('/api/v1/pricing', (req: Request, res: Response) => {
+    // Build documentation URL dynamically based on request
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'x402.silverbackdefi.app';
+    const docsUrl = `${protocol}://${host}/api-docs`;
+
     res.json({
         service: 'Silverback DEX Intelligence',
         description: 'DeFi trading intelligence and DEX execution on Silverback DEX',
-        documentation: 'https://silverbackdefi.app/api-docs',
+        documentation: docsUrl,
         payment: {
             network: 'base',
             token: 'USDC',
@@ -1039,6 +1087,8 @@ export function startX402Server(): void {
         console.log(`\n🦍 Silverback x402 server running on port ${PORT}`);
         console.log(`   Wallet: ${X402_WALLET_ADDRESS}`);
         console.log(`   Network: Base (USDC payments)`);
+        console.log(`   API Docs: GET /api-docs`);
+        console.log(`   OpenAPI: GET /api/v1/openapi.json`);
         console.log(`   Pricing: GET /api/v1/pricing`);
         console.log(`   Health: GET /health\n`);
     });

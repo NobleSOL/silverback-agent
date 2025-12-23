@@ -53,6 +53,90 @@ The agent connects to Silverback DEX running on Keeta Network:
 - **Protocol Fee**: 0.05% on swaps
 - **API**: `https://dexkeeta.onrender.com/api`
 
+## x402 Payment API
+
+Silverback exposes its DeFi intelligence as a paid API using the **x402 micropayment protocol**. Pay with USDC on Base for instant access to trading data and execution.
+
+### Live API
+
+**Production URL:** https://x402.silverbackdefi.app
+
+| Resource | URL |
+|----------|-----|
+| API Documentation | https://x402.silverbackdefi.app/api-docs |
+| OpenAPI Spec | https://x402.silverbackdefi.app/api/v1/openapi.json |
+| Pricing Info | https://x402.silverbackdefi.app/api/v1/pricing |
+
+### Available Endpoints
+
+| Endpoint | Price | Description |
+|----------|-------|-------------|
+| `POST /api/v1/swap-quote` | $0.02 | Get optimal swap route with price impact |
+| `POST /api/v1/swap` | $0.50 | Execute swap on Silverback DEX |
+| `POST /api/v1/technical-analysis` | $0.25 | Full TA with indicators and signals |
+| `POST /api/v1/backtest` | $1.00 | Run strategy backtest on historical data |
+| `POST /api/v1/pool-analysis` | $0.10 | Liquidity pool deep dive with health scoring |
+| `POST /api/v1/defi-yield` | $0.05 | DeFi yield opportunities on Base |
+| `POST /api/v1/lp-analysis` | $0.05 | LP position analysis for token pairs |
+| `GET /api/v1/top-pools` | $0.03 | Top yielding pools on Base DEXes |
+| `GET /api/v1/dex-metrics` | $0.05 | Overall DEX statistics |
+| `GET /api/v1/top-protocols` | $0.03 | Top DeFi protocols by TVL |
+| `GET /api/v1/top-coins` | $0.03 | Top cryptocurrencies by market cap |
+
+**Free Endpoints:**
+- `GET /health` - Health check
+- `GET /api/v1/pricing` - Pricing information
+- `GET /api/v1/price/:token` - Token price feed
+
+### Quick Start
+
+```bash
+# Free endpoint - get Bitcoin price
+curl https://x402.silverbackdefi.app/api/v1/price/bitcoin
+
+# Paid endpoint - returns 402 with payment details
+curl -X POST https://x402.silverbackdefi.app/api/v1/swap-quote \
+  -H "Content-Type: application/json" \
+  -d '{"tokenIn": "0x4200000000000000000000000000000000000006", "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "amountIn": "1.0"}'
+```
+
+### SDK
+
+```bash
+npm install @silverback/defi-client
+```
+
+```typescript
+import { SilverbackClient, BASE_TOKENS } from '@silverback/defi-client';
+
+const client = new SilverbackClient();
+
+// Free - get token price
+const price = await client.getTokenPrice('bitcoin');
+
+// Paid ($0.02) - get swap quote
+const quote = await client.getSwapQuote({
+  tokenIn: BASE_TOKENS.WETH,
+  tokenOut: BASE_TOKENS.USDC,
+  amountIn: '1.0'
+});
+```
+
+### Running x402 Server Locally
+
+```bash
+# Set environment variables
+export X402_ENABLED=true
+export X402_WALLET_ADDRESS=0xYourWalletAddress
+export CDP_API_KEY_ID=your-cdp-key-id
+export CDP_API_KEY_SECRET="-----BEGIN EC PRIVATE KEY-----..."
+
+# Start x402 server
+npm run start:x402
+```
+
+See `examples/` for more usage examples.
+
 ## Setup
 
 ### Prerequisites

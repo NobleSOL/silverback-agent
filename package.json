@@ -4,7 +4,8 @@
   "description": "Silverback DEX AI Agent powered by Virtuals GAME",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "cp src/x402/openapi.json dist/x402/",
     "start": "node dist/index.js",
     "start:x402": "node dist/x402/standalone.js",
     "dev": "ts-node src/index.ts",
@@ -24,6 +25,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^22.12.0",
     "@types/pg": "^8.15.6",
+    "@types/swagger-ui-express": "^4.1.8",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   },
@@ -47,6 +49,7 @@
     "jose": "^6.1.3",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.16.3",
+    "swagger-ui-express": "^5.0.1",
     "x402": "^1.0.1",
     "x402-express": "^1.0.0"
   },

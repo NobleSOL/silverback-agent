@@ -1,0 +1,1161 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Silverback DEX Intelligence API",
+    "description": "DeFi trading intelligence and DEX execution powered by x402 micropayments. Pay with USDC on Base chain for instant access to swap quotes, technical analysis, yield opportunities, and trade execution.\n\n## Payment Protocol\nThis API uses the **x402 protocol** for payments:\n1. Call any paid endpoint\n2. Receive a 402 Payment Required response with payment details\n3. Pay the specified USDC amount on Base chain\n4. Retry the request with the payment proof\n5. Receive your data\n\n## Supported Tokens\n- **USDC**: `0x833589fcd6edb6e08f4c7c32d4f71b54bda02913`\n- **WETH**: `0x4200000000000000000000000000000000000006`\n- **BACK**: `0x558881c4959e9cf961a7E1815FCD6586906babd2`\n\n## Client Libraries\n- JavaScript/TypeScript: `npm install @silverback/defi-client`\n- Use any x402-compatible HTTP client",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Silverback DEX",
+      "url": "https://silverbackdefi.app",
+      "email": "support@silverbackdefi.app"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "x-logo": {
+      "url": "https://silverbackdefi.app/logo.png"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://x402.silverbackdefi.app",
+      "description": "Production (Base Mainnet - USDC payments)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Trading",
+      "description": "Swap quotes and execution"
+    },
+    {
+      "name": "Analysis",
+      "description": "Technical analysis and backtesting"
+    },
+    {
+      "name": "DeFi",
+      "description": "Yield opportunities and liquidity pools"
+    },
+    {
+      "name": "Market Data",
+      "description": "Prices, protocols, and market metrics"
+    },
+    {
+      "name": "Free",
+      "description": "Free endpoints (no payment required)"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Free"],
+        "summary": "Health check",
+        "description": "Check if the API is running",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pricing": {
+      "get": {
+        "tags": ["Free"],
+        "summary": "API pricing information",
+        "description": "Get complete pricing information for all endpoints",
+        "operationId": "getPricing",
+        "responses": {
+          "200": {
+            "description": "Pricing information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricingResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/price/{token}": {
+      "get": {
+        "tags": ["Free"],
+        "summary": "Get token price",
+        "description": "Real-time token price from CoinGecko (free, no payment required)",
+        "operationId": "getTokenPrice",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "CoinGecko token ID (e.g., bitcoin, ethereum, usd-coin)",
+            "schema": {
+              "type": "string",
+              "example": "bitcoin"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token price data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPriceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/swap-quote": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Get swap quote ($0.02)",
+        "description": "Get optimal swap route with price impact analysis. Aggregates across multiple DEXes on Base.",
+        "operationId": "getSwapQuote",
+        "x-price": "$0.02",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwapQuoteRequest"
+              },
+              "example": {
+                "tokenIn": "0x4200000000000000000000000000000000000006",
+                "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                "amountIn": "1.0"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Swap quote with routing details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapQuoteResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/swap": {
+      "post": {
+        "tags": ["Trading"],
+        "summary": "Execute swap ($0.50)",
+        "description": "Execute a swap on Silverback DEX. Supports any token pair on Base chain.",
+        "operationId": "executeSwap",
+        "x-price": "$0.50",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwapRequest"
+              },
+              "example": {
+                "tokenIn": "USDC",
+                "tokenOut": "WETH",
+                "amountIn": "100",
+                "slippage": "0.5",
+                "walletAddress": "0x..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Swap executed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwapResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/technical-analysis": {
+      "post": {
+        "tags": ["Analysis"],
+        "summary": "Technical analysis ($0.25)",
+        "description": "Full technical analysis with RSI, MACD, Bollinger Bands, support/resistance levels, and trading signals.",
+        "operationId": "getTechnicalAnalysis",
+        "x-price": "$0.25",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechnicalAnalysisRequest"
+              },
+              "example": {
+                "token": "bitcoin",
+                "timeframe": "7"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Technical analysis results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalAnalysisResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtest": {
+      "post": {
+        "tags": ["Analysis"],
+        "summary": "Strategy backtest ($1.00)",
+        "description": "Run a trading strategy backtest on historical data. Supports momentum and mean reversion strategies.",
+        "operationId": "runBacktest",
+        "x-price": "$1.00",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRequest"
+              },
+              "example": {
+                "token": "bitcoin",
+                "strategy": "momentum",
+                "period": "30",
+                "signalThreshold": 70
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Backtest results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool-analysis": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Pool analysis ($0.10)",
+        "description": "Comprehensive liquidity pool analysis with health scoring, TVL, volume, and impermanent loss estimates.",
+        "operationId": "getPoolAnalysis",
+        "x-price": "$0.10",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolAnalysisRequest"
+              },
+              "example": {
+                "tokenA": "0x4200000000000000000000000000000000000006",
+                "tokenB": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pool analysis results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolAnalysisResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/defi-yield": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "Yield opportunities ($0.05)",
+        "description": "Find the best DeFi yield opportunities for any token on Base chain.",
+        "operationId": "getYieldOpportunities",
+        "x-price": "$0.05",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YieldRequest"
+              },
+              "example": {
+                "token": "USDC",
+                "riskTolerance": "medium"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Yield opportunities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YieldResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lp-analysis": {
+      "post": {
+        "tags": ["DeFi"],
+        "summary": "LP position analysis ($0.05)",
+        "description": "Analyze LP positions for token pairs with APR, TVL, and fee analysis.",
+        "operationId": "getLPAnalysis",
+        "x-price": "$0.05",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LPAnalysisRequest"
+              },
+              "example": {
+                "tokenPair": "USDC/WETH"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "LP analysis results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LPAnalysisResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/top-pools": {
+      "get": {
+        "tags": ["DeFi"],
+        "summary": "Top pools ($0.03)",
+        "description": "Get top yielding liquidity pools on Base DEXes.",
+        "operationId": "getTopPools",
+        "x-price": "$0.03",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of pools to return (1-20)",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          {
+            "name": "minTvl",
+            "in": "query",
+            "description": "Minimum TVL in USD",
+            "schema": {
+              "type": "integer",
+              "default": 100000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top pools list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopPoolsResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dex-metrics": {
+      "get": {
+        "tags": ["Market Data"],
+        "summary": "DEX metrics ($0.05)",
+        "description": "Overall DEX statistics and metrics for Base chain.",
+        "operationId": "getDexMetrics",
+        "x-price": "$0.05",
+        "responses": {
+          "200": {
+            "description": "DEX metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DexMetricsResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/top-protocols": {
+      "get": {
+        "tags": ["Market Data"],
+        "summary": "Top protocols ($0.03)",
+        "description": "Get top DeFi protocols by TVL.",
+        "operationId": "getTopProtocols",
+        "x-price": "$0.03",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of protocols to return (1-50)",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "chain",
+            "in": "query",
+            "description": "Chain filter",
+            "schema": {
+              "type": "string",
+              "default": "base",
+              "enum": ["base", "ethereum", "arbitrum", "all"]
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Protocol category filter",
+            "schema": {
+              "type": "string",
+              "enum": ["dex", "lending", "bridge", "staking", "derivatives"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top protocols list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopProtocolsResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/top-coins": {
+      "get": {
+        "tags": ["Market Data"],
+        "summary": "Top coins ($0.03)",
+        "description": "Get top cryptocurrencies by market cap.",
+        "operationId": "getTopCoins",
+        "x-price": "$0.03",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of coins to return (1-50)",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "chain",
+            "in": "query",
+            "description": "Chain filter",
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "enum": ["base", "ethereum", "all"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top coins list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopCoinsResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequired"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "service": {
+            "type": "string",
+            "example": "silverback-x402"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "walletConfigured": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PricingResponse": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "payment": {
+            "type": "object",
+            "properties": {
+              "network": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "wallet": {
+                "type": "string"
+              }
+            }
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "TokenPriceResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string"
+              },
+              "price": {
+                "type": "object",
+                "properties": {
+                  "usd": {
+                    "type": "number"
+                  },
+                  "eth": {
+                    "type": "number"
+                  },
+                  "btc": {
+                    "type": "number"
+                  }
+                }
+              },
+              "change24h": {
+                "type": "string"
+              },
+              "volume24h": {
+                "type": "string"
+              },
+              "marketCap": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "SwapQuoteRequest": {
+        "type": "object",
+        "required": ["tokenIn", "tokenOut", "amountIn"],
+        "properties": {
+          "tokenIn": {
+            "type": "string",
+            "description": "Input token address"
+          },
+          "tokenOut": {
+            "type": "string",
+            "description": "Output token address"
+          },
+          "amountIn": {
+            "type": "string",
+            "description": "Amount to swap (human-readable)"
+          }
+        }
+      },
+      "SwapQuoteResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "amountOut": {
+            "type": "string"
+          },
+          "priceImpact": {
+            "type": "string"
+          },
+          "fee": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          }
+        }
+      },
+      "SwapRequest": {
+        "type": "object",
+        "required": ["tokenIn", "tokenOut", "amountIn"],
+        "properties": {
+          "tokenIn": {
+            "type": "string",
+            "description": "Token to sell (address or symbol)"
+          },
+          "tokenOut": {
+            "type": "string",
+            "description": "Token to buy (address or symbol)"
+          },
+          "amountIn": {
+            "type": "string",
+            "description": "Amount to swap"
+          },
+          "slippage": {
+            "type": "string",
+            "description": "Slippage tolerance percentage",
+            "default": "0.5"
+          },
+          "walletAddress": {
+            "type": "string",
+            "description": "Recipient wallet address"
+          }
+        }
+      },
+      "SwapResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "txHash": {
+            "type": "string"
+          },
+          "sold": {
+            "type": "string"
+          },
+          "received": {
+            "type": "string"
+          }
+        }
+      },
+      "TechnicalAnalysisRequest": {
+        "type": "object",
+        "required": ["token"],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "CoinGecko token ID"
+          },
+          "timeframe": {
+            "type": "string",
+            "description": "Days: 1, 7, 14, or 30",
+            "default": "7"
+          }
+        }
+      },
+      "TechnicalAnalysisResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "rsi": {
+            "type": "number"
+          },
+          "trend": {
+            "type": "string"
+          },
+          "momentum": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "HOLD"]
+          }
+        }
+      },
+      "BacktestRequest": {
+        "type": "object",
+        "required": ["token", "strategy"],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "CoinGecko token ID"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": ["momentum", "mean_reversion"]
+          },
+          "period": {
+            "type": "string",
+            "description": "Days (default: 30)",
+            "default": "30"
+          },
+          "signalThreshold": {
+            "type": "integer",
+            "description": "Signal threshold 0-100",
+            "default": 70
+          }
+        }
+      },
+      "BacktestResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string"
+              },
+              "strategy": {
+                "type": "string"
+              },
+              "stats": {
+                "type": "object"
+              },
+              "trades": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "PoolAnalysisRequest": {
+        "type": "object",
+        "properties": {
+          "tokenA": {
+            "type": "string",
+            "description": "First token address"
+          },
+          "tokenB": {
+            "type": "string",
+            "description": "Second token address"
+          },
+          "poolId": {
+            "type": "string",
+            "description": "Pool ID (alternative to tokenA/tokenB)"
+          }
+        }
+      },
+      "PoolAnalysisResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "tvl": {
+            "type": "string"
+          },
+          "liquidityRating": {
+            "type": "string"
+          },
+          "healthScore": {
+            "type": "integer"
+          }
+        }
+      },
+      "YieldRequest": {
+        "type": "object",
+        "required": ["token"],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Token symbol or address"
+          },
+          "riskTolerance": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "default": "medium"
+          }
+        }
+      },
+      "YieldResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "totalOpportunities": {
+            "type": "integer"
+          },
+          "bestApr": {
+            "type": "string"
+          },
+          "opportunities": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "LPAnalysisRequest": {
+        "type": "object",
+        "properties": {
+          "tokenPair": {
+            "type": "string",
+            "description": "e.g., USDC/WETH"
+          },
+          "tokenA": {
+            "type": "string"
+          },
+          "tokenB": {
+            "type": "string"
+          }
+        }
+      },
+      "LPAnalysisResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "summary": {
+            "type": "object"
+          }
+        }
+      },
+      "TopPoolsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "topPools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "apr": {
+                  "type": "string"
+                },
+                "tvl": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "DexMetricsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "network": {
+                "type": "string"
+              },
+              "chainId": {
+                "type": "integer"
+              },
+              "aggregator": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "TopProtocolsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "topProtocols": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "tvl": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "TopCoinsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "topCoins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "symbol": {
+                  "type": "string"
+                },
+                "price": {
+                  "type": "string"
+                },
+                "marketCap": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "type": "object",
+        "description": "x402 payment required response",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Payment Required"
+          },
+          "price": {
+            "type": "string",
+            "example": "$0.02"
+          },
+          "paymentAddress": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string",
+            "example": "base"
+          },
+          "token": {
+            "type": "string",
+            "example": "USDC"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
