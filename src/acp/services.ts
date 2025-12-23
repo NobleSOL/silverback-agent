@@ -30,12 +30,15 @@ import {
 import { OHLCV } from '../market-data/types';
 
 // Base Mainnet Configuration - Multiple RPCs for fallback
+// Prioritized by reliability and privacy (based on chainlist.org)
 const BASE_RPC_URLS = [
-    'https://mainnet.base.org',
-    'https://base.llamarpc.com',
-    'https://base.drpc.org',
-    'https://1rpc.io/base',
-    'https://base-mainnet.public.blastapi.io'
+    'https://base.llamarpc.com',           // LlamaNodes - no tracking, very reliable
+    'https://1rpc.io/base',                // 1RPC - zero tracking, good performance
+    'https://base-rpc.publicnode.com',     // PublicNode - no user tracking
+    'https://base.meowrpc.com',            // MEOWRPC - no tracking
+    'https://base.drpc.org',               // dRPC - minimal logging
+    'https://mainnet.base.org',            // Official Base RPC (moved down - less reliable under load)
+    'https://base-mainnet.public.blastapi.io'  // BlastAPI - logs purged after 14 days
 ];
 const BASE_RPC_URL = process.env.BASE_RPC_URL || BASE_RPC_URLS[0];
 const SILVERBACK_UNIFIED_ROUTER = '0x565cBf0F3eAdD873212Db91896e9a548f6D64894';
@@ -97,7 +100,7 @@ const COINGECKO_API = process.env.COINGECKO_API_KEY
 // CDP Client API Key for RPC (separate from Secret Key)
 const CDP_CLIENT_KEY = process.env.CDP_CLIENT_KEY;
 
-function getProvider(): ethers.JsonRpcProvider {
+export function getProvider(): ethers.JsonRpcProvider {
     // Use CDP RPC if client key available, otherwise fall back to public RPC
     const rpcUrl = CDP_CLIENT_KEY
         ? `https://api.developer.coinbase.com/rpc/v1/base/${CDP_CLIENT_KEY}`

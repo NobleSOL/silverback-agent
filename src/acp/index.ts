@@ -23,7 +23,7 @@ import AcpClient, {
     MemoType,
     DeliverablePayload
 } from "@virtuals-protocol/acp-node";
-import { processServiceRequest, handleExecuteSwapWithFunds } from "./services";
+import { processServiceRequest, handleExecuteSwapWithFunds, getProvider } from "./services";
 import { enqueueJob, completeJob, failJob, getQueueStats, canAcceptJob } from "./job-queue";
 import dotenv from "dotenv";
 import { Address } from "viem";
