@@ -53,13 +53,13 @@ async function main() {
         // Wrap fetch with x402 payment handling
         const x402Fetch = wrapFetchWithPayment(fetch, client);
 
-        // Define all endpoints to test
+        // Define all endpoints to test (updated pricing)
         const endpoints = [
             {
                 name: 'swap-quote',
                 path: '/api/v1/swap-quote',
                 method: 'POST',
-                price: '$0.02',
+                price: '$0.01',
                 body: {
                     tokenIn: '0x4200000000000000000000000000000000000006',  // WETH
                     tokenOut: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
@@ -70,29 +70,43 @@ async function main() {
                 name: 'top-pools',
                 path: '/api/v1/top-pools?limit=5',
                 method: 'GET',
-                price: '$0.03',
+                price: '$0.01',
                 body: null
             },
             {
                 name: 'top-protocols',
                 path: '/api/v1/top-protocols?limit=5&chain=base',
                 method: 'GET',
-                price: '$0.03',
+                price: '$0.01',
                 body: null
             },
             {
                 name: 'top-coins',
                 path: '/api/v1/top-coins?limit=5',
                 method: 'GET',
-                price: '$0.03',
+                price: '$0.01',
                 body: null
             },
             {
                 name: 'defi-yield',
                 path: '/api/v1/defi-yield',
                 method: 'POST',
-                price: '$0.05',
+                price: '$0.02',
                 body: { token: 'USDC', riskTolerance: 'medium' }
+            },
+            {
+                name: 'pool-analysis',
+                path: '/api/v1/pool-analysis',
+                method: 'POST',
+                price: '$0.02',
+                body: { tokenA: '0x4200000000000000000000000000000000000006', tokenB: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }
+            },
+            {
+                name: 'lp-analysis',
+                path: '/api/v1/lp-analysis',
+                method: 'POST',
+                price: '$0.02',
+                body: { tokenPair: 'USDC/WETH' }
             },
             {
                 name: 'technical-analysis',
@@ -100,15 +114,7 @@ async function main() {
                 method: 'POST',
                 price: '$0.25',
                 body: { token: 'bitcoin', timeframe: '7' }
-            },
-            {
-                name: 'pool-analysis',
-                path: '/api/v1/pool-analysis',
-                method: 'POST',
-                price: '$0.10',
-                body: { tokenA: '0x4200000000000000000000000000000000000006', tokenB: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }
             }
-            // Skipping backtest ($1.00) - too expensive for testing
         ];
 
         let successCount = 0;
