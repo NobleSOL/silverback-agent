@@ -12,6 +12,7 @@
     "dev:acp": "ts-node src/acp/standalone.ts",
     "dev:x402": "ts-node src/x402/standalone.ts",
     "acp:cleanup": "node dist/acp/cleanup-jobs.js",
+    "x402:test-discovery": "node dist/x402/test-discovery.js",
     "watch": "tsc --watch",
     "postinstall": "node scripts/patch-ajv.js"
   },
