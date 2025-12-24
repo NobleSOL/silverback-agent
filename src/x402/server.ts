@@ -47,6 +47,20 @@ try {
     console.warn('⚠️  Could not pre-cache bazaar module:', e);
 }
 
+/**
+ * Helper to create discoverable Bazaar extensions
+ * Adds `discoverable: true` to the bazaar extension so services appear in Bazaar catalog
+ * See: https://x402.gitbook.io/x402/core-concepts/bazaar-discovery-layer
+ */
+function discoverableExtension(config: Parameters<typeof declareDiscoveryExtension>[0]): Record<string, any> {
+    const extension = declareDiscoveryExtension(config);
+    // Add discoverable: true to the bazaar object
+    if (extension.bazaar) {
+        extension.bazaar.discoverable = true;
+    }
+    return extension;
+}
+
 // Import existing ACP service handlers - already production-ready
 import {
     handleSwapQuote,
@@ -254,7 +268,7 @@ async function initializeServer() {
             description: "Get optimal swap route with price impact analysis",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { tokenIn: "0x4200000000000000000000000000000000000006", tokenOut: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", amountIn: "1.0" },
                     inputSchema: {
                         properties: {
@@ -281,7 +295,7 @@ async function initializeServer() {
             description: "Comprehensive liquidity pool analysis with health scoring",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { tokenA: "0x4200000000000000000000000000000000000006", tokenB: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
                     inputSchema: {
                         properties: {
@@ -307,7 +321,7 @@ async function initializeServer() {
             description: "Full technical analysis with indicators, patterns, and signals",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { token: "bitcoin", timeframe: "7" },
                     inputSchema: {
                         properties: {
@@ -333,7 +347,7 @@ async function initializeServer() {
             description: "Execute swap on Silverback DEX",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { tokenIn: "USDC", tokenOut: "WETH", amountIn: "100" },
                     inputSchema: {
                         properties: {
@@ -361,7 +375,7 @@ async function initializeServer() {
             description: "Overall DEX statistics and metrics",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     output: {
                         example: { success: true, data: { network: "Base", aggregator: "OpenOcean", tvl: "$5.2M" } }
                     }
@@ -378,7 +392,7 @@ async function initializeServer() {
             description: "Run strategy backtest on historical data",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { token: "bitcoin", strategy: "momentum", days: 30 },
                     inputSchema: {
                         properties: {
@@ -405,7 +419,7 @@ async function initializeServer() {
             description: "DeFi yield opportunities for any token on Base",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { token: "USDC", riskTolerance: "medium" },
                     inputSchema: {
                         properties: {
@@ -431,7 +445,7 @@ async function initializeServer() {
             description: "LP position analysis for token pairs",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { tokenPair: "USDC/WETH" },
                     inputSchema: {
                         properties: {
@@ -457,7 +471,7 @@ async function initializeServer() {
             description: "Top yielding pools on Base DEXes",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { limit: 10, minTvl: 100000 },
                     inputSchema: {
                         properties: {
@@ -481,7 +495,7 @@ async function initializeServer() {
             description: "Top DeFi protocols by TVL",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { limit: 10, chain: "base" },
                     inputSchema: {
                         properties: {
@@ -506,7 +520,7 @@ async function initializeServer() {
             description: "Top cryptocurrencies by market cap",
             mimeType: "application/json",
             extensions: {
-                ...declareDiscoveryExtension({
+                ...discoverableExtension({
                     input: { limit: 10, chain: "all" },
                     inputSchema: {
                         properties: {
@@ -567,9 +581,16 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
         service: 'Silverback DEX Intelligence',
         description: 'DeFi trading intelligence and DEX execution on Silverback DEX',
         documentation: 'https://silverbackdefi.app/api-docs',
+        bazaar: {
+            discoverable: true,
+            listEndpoint: 'https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources',
+            totalEndpoints: 11
+        },
         payment: {
             network: NETWORK_CAIP2,
+            networkName: X402_NETWORK === 'base' ? 'Base Mainnet' : 'Base Sepolia',
             token: 'USDC',
+            tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
             protocol: 'x402 v2',
             wallet: X402_WALLET_ADDRESS || 'Not configured'
         },
@@ -1185,13 +1206,23 @@ export function startX402Server(): void {
 
     const PORT = parseInt(process.env.X402_PORT || '3402', 10);
 
+    const isMainnet = X402_NETWORK === 'base';
+
     app.listen(PORT, () => {
         console.log(`\n🦍 Silverback x402 server running on port ${PORT}`);
         console.log(`   Wallet: ${X402_WALLET_ADDRESS}`);
-        console.log(`   Network: ${NETWORK_CAIP2} (USDC payments)`);
-        console.log(`   Protocol: x402 v2 with Bazaar discovery`);
+        console.log(`   Network: ${NETWORK_CAIP2} (${isMainnet ? 'Base Mainnet' : 'Base Sepolia'})`);
+        console.log(`   Token: USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)`);
+        console.log(`   Protocol: x402 v2`);
+        console.log(`   Bazaar: discoverable: true (11 endpoints)`);
         console.log(`   Pricing: GET /api/v1/pricing`);
-        console.log(`   Health: GET /health\n`);
+        console.log(`   Health: GET /health`);
+        if (isMainnet && hasCdpCredentials()) {
+            console.log(`   ✅ CDP facilitator configured - services will appear in Bazaar`);
+        } else if (isMainnet) {
+            console.log(`   ⚠️  CDP credentials missing - services may NOT appear in Bazaar`);
+        }
+        console.log('');
     });
 }
 
