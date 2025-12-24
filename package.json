@@ -13,6 +13,7 @@
     "dev:x402": "ts-node src/x402/standalone.ts",
     "acp:cleanup": "node dist/acp/cleanup-jobs.js",
     "x402:test-discovery": "node dist/x402/test-discovery.js",
+    "x402:pay": "node dist/x402/make-payment.js",
     "watch": "tsc --watch",
     "postinstall": "node scripts/patch-ajv.js"
   },
@@ -48,6 +49,7 @@
     "@x402/evm": "^2.0.0",
     "@x402/express": "^2.0.0",
     "@x402/extensions": "^2.0.0",
+    "@x402/fetch": "^2.1.0",
     "ajv": "^8.17.1",
     "better-sqlite3": "^12.5.0",
     "dotenv": "^16.4.7",
