@@ -262,7 +262,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.02",
+                price: "$0.01",
                 network: NETWORK_CAIP2
             },
             description: "Get optimal swap route with price impact analysis",
@@ -289,7 +289,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.10",
+                price: "$0.02",
                 network: NETWORK_CAIP2
             },
             description: "Comprehensive liquidity pool analysis with health scoring",
@@ -382,38 +382,11 @@ async function initializeServer() {
                 })
             }
         },
-        "POST /api/v1/backtest": {
-            accepts: {
-                scheme: "exact",
-                payTo: X402_WALLET_ADDRESS,
-                price: "$1.00",
-                network: NETWORK_CAIP2
-            },
-            description: "Run strategy backtest on historical data",
-            mimeType: "application/json",
-            extensions: {
-                ...discoverableExtension({
-                    input: { token: "bitcoin", strategy: "momentum", days: 30 },
-                    inputSchema: {
-                        properties: {
-                            token: { type: "string", description: "CoinGecko token ID (e.g., bitcoin)" },
-                            strategy: { type: "string", description: "Strategy: momentum or mean_reversion" },
-                            days: { type: "number", description: "Backtest period in days (default: 30)" }
-                        },
-                        required: ["token", "strategy"]
-                    },
-                    bodyType: "json",
-                    output: {
-                        example: { success: true, data: { totalReturn: "15.5%", winRate: 0.65, sharpeRatio: 1.8 } }
-                    }
-                })
-            }
-        },
         "POST /api/v1/defi-yield": {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.05",
+                price: "$0.02",
                 network: NETWORK_CAIP2
             },
             description: "DeFi yield opportunities for any token on Base",
@@ -439,7 +412,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.05",
+                price: "$0.02",
                 network: NETWORK_CAIP2
             },
             description: "LP position analysis for token pairs",
@@ -465,7 +438,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.03",
+                price: "$0.01",
                 network: NETWORK_CAIP2
             },
             description: "Top yielding pools on Base DEXes",
@@ -489,7 +462,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.03",
+                price: "$0.01",
                 network: NETWORK_CAIP2
             },
             description: "Top DeFi protocols by TVL",
@@ -514,7 +487,7 @@ async function initializeServer() {
             accepts: {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
-                price: "$0.03",
+                price: "$0.01",
                 network: NETWORK_CAIP2
             },
             description: "Top cryptocurrencies by market cap",

@@ -133,7 +133,12 @@ async function main() {
 
                 if (response.ok) {
                     const data = await response.json();
-                    console.log(`   ✅ Success! Got ${JSON.stringify(data).length} bytes`);
+                    // Show aggregator for swap-quote
+                    if (endpoint.name === 'swap-quote' && data.data?.aggregator) {
+                        console.log(`   ✅ Success! Aggregator: ${data.data.aggregator}`);
+                    } else {
+                        console.log(`   ✅ Success! Got ${JSON.stringify(data).length} bytes`);
+                    }
                     successCount++;
                     // Parse price string like "$0.02" to number
                     totalSpent += parseFloat(endpoint.price.replace('$', ''));
