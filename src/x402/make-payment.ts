@@ -53,40 +53,107 @@ async function main() {
         // Wrap fetch with x402 payment handling
         const x402Fetch = wrapFetchWithPayment(fetch, client);
 
-        console.log('\n💰 Making paid request to /api/v1/swap-quote ($0.02)...\n');
+        // Define all endpoints to test
+        const endpoints = [
+            {
+                name: 'swap-quote',
+                path: '/api/v1/swap-quote',
+                method: 'POST',
+                price: '$0.02',
+                body: {
+                    tokenIn: '0x4200000000000000000000000000000000000006',  // WETH
+                    tokenOut: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
+                    amountIn: '1.0'
+                }
+            },
+            {
+                name: 'top-pools',
+                path: '/api/v1/top-pools?limit=5',
+                method: 'GET',
+                price: '$0.03',
+                body: null
+            },
+            {
+                name: 'top-protocols',
+                path: '/api/v1/top-protocols?limit=5&chain=base',
+                method: 'GET',
+                price: '$0.03',
+                body: null
+            },
+            {
+                name: 'top-coins',
+                path: '/api/v1/top-coins?limit=5',
+                method: 'GET',
+                price: '$0.03',
+                body: null
+            },
+            {
+                name: 'defi-yield',
+                path: '/api/v1/defi-yield',
+                method: 'POST',
+                price: '$0.05',
+                body: { token: 'USDC', riskTolerance: 'medium' }
+            },
+            {
+                name: 'technical-analysis',
+                path: '/api/v1/technical-analysis',
+                method: 'POST',
+                price: '$0.25',
+                body: { token: 'bitcoin', timeframe: '7' }
+            },
+            {
+                name: 'pool-analysis',
+                path: '/api/v1/pool-analysis',
+                method: 'POST',
+                price: '$0.10',
+                body: { tokenA: '0x4200000000000000000000000000000000000006', tokenB: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }
+            }
+            // Skipping backtest ($1.00) - too expensive for testing
+        ];
 
-        // Make the paid request
-        const response = await x402Fetch(`${X402_SERVICE_URL}/api/v1/swap-quote`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tokenIn: '0x4200000000000000000000000000000000000006',  // WETH
-                tokenOut: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
-                amountIn: '1.0'
-            })
-        });
+        let successCount = 0;
+        let totalSpent = 0;
 
-        console.log(`   Status: ${response.status}`);
+        for (const endpoint of endpoints) {
+            console.log(`\n💰 [${endpoint.name}] ${endpoint.method} ${endpoint.path} (${endpoint.price})...`);
 
-        if (response.ok) {
-            const data = await response.json();
-            console.log('\n✅ Payment successful! Service responded:\n');
-            console.log(JSON.stringify(data, null, 2));
-            console.log('\n🎉 Your service should now be cataloged in Bazaar!');
-            console.log('   Run "npm run x402:test-discovery" to verify.\n');
-        } else if (response.status === 402) {
-            console.log('\n⚠️  Still getting 402 - payment may have failed');
-            const text = await response.text();
-            console.log('   Response:', text.substring(0, 500));
-            console.log('\n   Possible issues:');
-            console.log('   - Insufficient USDC balance in wallet');
-            console.log('   - USDC not approved for x402 facilitator');
-            console.log('   - Network/RPC issues');
-        } else {
-            console.log(`\n⚠️  Unexpected response: ${response.status}`);
-            const text = await response.text();
-            console.log('   Response:', text.substring(0, 500));
+            try {
+                const options: RequestInit = {
+                    method: endpoint.method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+
+                if (endpoint.body) {
+                    options.body = JSON.stringify(endpoint.body);
+                }
+
+                const response = await x402Fetch(`${X402_SERVICE_URL}${endpoint.path}`, options);
+
+                console.log(`   Status: ${response.status}`);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log(`   ✅ Success! Got ${JSON.stringify(data).length} bytes`);
+                    successCount++;
+                    // Parse price string like "$0.02" to number
+                    totalSpent += parseFloat(endpoint.price.replace('$', ''));
+                } else if (response.status === 402) {
+                    console.log('   ⚠️  Still 402 - payment failed');
+                } else {
+                    console.log(`   ⚠️  Unexpected: ${response.status}`);
+                }
+            } catch (err: any) {
+                console.log(`   ❌ Error: ${err.message}`);
+            }
+
+            // Small delay between requests
+            await new Promise(r => setTimeout(r, 1000));
         }
+
+        console.log('\n' + '='.repeat(50));
+        console.log(`\n🎉 Completed ${successCount}/${endpoints.length} payments`);
+        console.log(`💵 Total spent: $${totalSpent.toFixed(2)} USDC`);
+        console.log('\n   Run "npm run x402:test-discovery" to check Bazaar indexing.\n');
 
     } catch (err: any) {
         console.error('\n❌ Error:', err.message);
