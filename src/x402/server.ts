@@ -13,8 +13,6 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import { paymentMiddleware } from 'x402-express';
-// @ts-ignore - module resolution issue with x402 extensions
-import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { SignJWT, importPKCS8 } from 'jose';
 
 // Import existing ACP service handlers - already production-ready
@@ -152,7 +150,8 @@ function initializeServer() {
 
     // Determine network and facilitator configuration
     const isMainnet = X402_NETWORK === 'base';
-    const network = isMainnet ? 'base' : 'base-sepolia';
+    // Use EIP-155 chain ID format for Bazaar discovery
+    const network = isMainnet ? 'eip155:8453' : 'eip155:84532';
 
     // Configure facilitator based on network
     let facilitatorConfig: { url: string; createAuthHeaders?: () => Promise<any> };
@@ -174,210 +173,344 @@ function initializeServer() {
         facilitatorConfig = { url: TESTNET_FACILITATOR_URL };
     }
 
+    // Define routes with Bazaar-compatible discovery extensions
+    // Format follows x402 v2 spec: https://x402.gitbook.io/x402/core-concepts/bazaar-discovery-layer
+    const routes = {
+        "POST /api/v1/swap-quote": {
+            price: "$0.02",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Get optimal swap route with price impact analysis for Base DEX trading",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            tokenIn: { type: "string", description: "Input token address (e.g., 0x4200000000000000000000000000000000000006 for WETH)", required: true },
+                            tokenOut: { type: "string", description: "Output token address (e.g., 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 for USDC)", required: true },
+                            amountIn: { type: "string", description: "Amount to swap in human-readable format (e.g., '1.0')", required: true }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            amountOut: { type: "string", description: "Expected output amount" },
+                            priceImpact: { type: "string", description: "Price impact percentage" },
+                            fee: { type: "string", description: "Trading fee" },
+                            route: { type: "string", description: "Optimal route path" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/pool-analysis": {
+            price: "$0.10",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Comprehensive liquidity pool analysis with health scoring and TVL metrics",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            tokenA: { type: "string", description: "First token address", required: true },
+                            tokenB: { type: "string", description: "Second token address", required: true }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            tvl: { type: "string", description: "Total value locked" },
+                            liquidityRating: { type: "string", description: "Pool liquidity rating (GOOD/MEDIUM/LOW)" },
+                            healthScore: { type: "number", description: "Pool health score 0-100" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/technical-analysis": {
+            price: "$0.25",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Full technical analysis with RSI, MACD, moving averages, patterns, and trading signals",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            token: { type: "string", description: "CoinGecko token ID (e.g., 'bitcoin', 'ethereum')", required: true },
+                            timeframe: { type: "string", description: "Analysis period in days: 1, 7, 14, or 30" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            rsi: { type: "number", description: "Relative Strength Index (0-100)" },
+                            trend: { type: "string", description: "Current trend direction" },
+                            momentum: { type: "string", description: "Momentum indicator" },
+                            recommendation: { type: "string", description: "Trading recommendation (BUY/SELL/HOLD)" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/swap": {
+            price: "$0.50",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Execute token swap on Silverback DEX via OpenOcean aggregator on Base chain",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            tokenIn: { type: "string", description: "Token to sell (address or symbol like 'USDC')", required: true },
+                            tokenOut: { type: "string", description: "Token to buy (address or symbol like 'WETH')", required: true },
+                            amountIn: { type: "string", description: "Amount to swap in human-readable format", required: true },
+                            slippage: { type: "string", description: "Slippage tolerance percentage (default: 0.5)" },
+                            walletAddress: { type: "string", description: "Recipient wallet address" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            txHash: { type: "string", description: "Transaction hash on Base" },
+                            sold: { type: "string", description: "Amount sold" },
+                            received: { type: "string", description: "Amount received" }
+                        }
+                    }
+                }
+            }
+        },
+        "GET /api/v1/dex-metrics": {
+            price: "$0.05",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Overall DEX statistics, routing info, and supported tokens on Base chain",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {},
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            network: { type: "string" },
+                            chainId: { type: "number" },
+                            routing: { type: "object", description: "Sample routing information" },
+                            supportedTokens: { type: "object", description: "Map of supported token addresses" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/backtest": {
+            price: "$1.00",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Run trading strategy backtest on historical OHLCV data with performance metrics",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            token: { type: "string", description: "CoinGecko token ID (e.g., 'bitcoin')", required: true },
+                            strategy: { type: "string", description: "Strategy type: 'momentum' or 'mean_reversion'", required: true },
+                            period: { type: "string", description: "Backtest period in days (default: 30)" },
+                            signalThreshold: { type: "number", description: "Signal threshold 0-100 (default: 70)" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            stats: {
+                                type: "object",
+                                properties: {
+                                    totalReturn: { type: "string" },
+                                    winRate: { type: "number" },
+                                    sharpeRatio: { type: "number" }
+                                }
+                            },
+                            trades: { type: "array", description: "List of backtest trades" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/defi-yield": {
+            price: "$0.05",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Find DeFi yield opportunities for any token on Base including lending, staking, and LP",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            token: { type: "string", description: "Token symbol (USDC, WETH, cbBTC) or contract address", required: true },
+                            riskTolerance: { type: "string", description: "Risk level: 'low', 'medium', or 'high' (default: medium)" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            totalOpportunities: { type: "number" },
+                            bestApr: { type: "string", description: "Highest APR available" },
+                            opportunities: { type: "array", description: "List of yield opportunities" }
+                        }
+                    }
+                }
+            }
+        },
+        "POST /api/v1/lp-analysis": {
+            price: "$0.05",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Analyze liquidity provider positions for token pairs with APR and impermanent loss estimates",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        body: {
+                            tokenPair: { type: "string", description: "Token pair like 'USDC/WETH'" },
+                            tokenA: { type: "string", description: "First token symbol or address" },
+                            tokenB: { type: "string", description: "Second token symbol or address" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            positions: { type: "array", description: "Available LP positions" },
+                            summary: {
+                                type: "object",
+                                properties: {
+                                    totalValue: { type: "string" },
+                                    weightedApr: { type: "string" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "GET /api/v1/top-pools": {
+            price: "$0.03",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Get top yielding liquidity pools on Base DEXes sorted by APR",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        queryParams: {
+                            limit: { type: "number", description: "Number of pools to return (1-20, default: 10)" },
+                            minTvl: { type: "number", description: "Minimum TVL in USD (default: 100000)" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            topPools: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string" },
+                                        apr: { type: "string" },
+                                        tvl: { type: "string" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "GET /api/v1/top-protocols": {
+            price: "$0.03",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Get top DeFi protocols ranked by TVL with category filtering",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        queryParams: {
+                            limit: { type: "number", description: "Number of protocols to return (1-50, default: 10)" },
+                            chain: { type: "string", description: "Chain filter: 'base', 'ethereum', 'arbitrum', or 'all'" },
+                            category: { type: "string", description: "Protocol category: 'dex', 'lending', 'bridge', etc." }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            topProtocols: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string" },
+                                        tvl: { type: "string" },
+                                        category: { type: "string" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "GET /api/v1/top-coins": {
+            price: "$0.03",
+            network: network,
+            resource: X402_WALLET_ADDRESS,
+            description: "Get top cryptocurrencies ranked by market cap with price and 24h change",
+            extensions: {
+                bazaar: {
+                    discoverable: true,
+                    inputSchema: {
+                        queryParams: {
+                            limit: { type: "number", description: "Number of coins to return (1-50, default: 10)" },
+                            chain: { type: "string", description: "Chain filter: 'base', 'ethereum', or 'all'" }
+                        }
+                    },
+                    outputSchema: {
+                        type: "object",
+                        properties: {
+                            success: { type: "boolean" },
+                            topCoins: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        rank: { type: "number" },
+                                        name: { type: "string" },
+                                        symbol: { type: "string" },
+                                        price: { type: "string" },
+                                        marketCap: { type: "string" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     app.use(
         paymentMiddleware(
             X402_WALLET_ADDRESS as `0x${string}`,
-            {
-                "POST /api/v1/swap-quote": {
-                    price: "$0.02",
-                    network: network as any,
-                    config: {
-                        description: "Get optimal swap route with price impact analysis"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenIn: "0x4200000000000000000000000000000000000006", tokenOut: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", amountIn: "1.0" },
-                        inputSchema: {
-                            properties: {
-                                tokenIn: { type: "string", description: "Input token address" },
-                                tokenOut: { type: "string", description: "Output token address" },
-                                amountIn: { type: "string", description: "Amount to swap" }
-                            },
-                            required: ["tokenIn", "tokenOut", "amountIn"]
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, amountOut: "3500.50", priceImpact: "0.15%", fee: "0.3%", route: "WETH -> USDC" } }
-                    })
-                },
-                "POST /api/v1/pool-analysis": {
-                    price: "$0.10",
-                    network: network as any,
-                    config: {
-                        description: "Comprehensive liquidity pool analysis with health scoring"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenA: "0x4200000000000000000000000000000000000006", tokenB: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
-                        inputSchema: {
-                            properties: {
-                                tokenA: { type: "string", description: "First token address" },
-                                tokenB: { type: "string", description: "Second token address" }
-                            },
-                            required: ["tokenA", "tokenB"]
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, tvl: "$1.2M", liquidityRating: "GOOD", healthScore: 85 } }
-                    })
-                },
-                "POST /api/v1/technical-analysis": {
-                    price: "$0.25",
-                    network: network as any,
-                    config: {
-                        description: "Full technical analysis with indicators, patterns, and signals"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "bitcoin", timeframe: "7" },
-                        inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "CoinGecko token ID" },
-                                timeframe: { type: "string", description: "Days: 1, 7, 14, or 30" }
-                            },
-                            required: ["token"]
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, rsi: 55, trend: "up", momentum: "bullish", recommendation: "HOLD" } }
-                    })
-                },
-                "POST /api/v1/swap": {
-                    price: "$0.50",
-                    network: network as any,
-                    config: {
-                        description: "Execute swap on Silverback DEX"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenIn: "USDC", tokenOut: "WETH", amountIn: "100" },
-                        inputSchema: {
-                            properties: {
-                                tokenIn: { type: "string", description: "Token to sell" },
-                                tokenOut: { type: "string", description: "Token to buy" },
-                                amountIn: { type: "string", description: "Amount to swap" },
-                                slippage: { type: "string", description: "Slippage tolerance %" }
-                            },
-                            required: ["tokenIn", "tokenOut", "amountIn"]
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, txHash: "0x...", sold: "100 USDC", received: "0.028 WETH" } }
-                    })
-                },
-                "GET /api/v1/dex-metrics": {
-                    price: "$0.05",
-                    network: network as any,
-                    config: {
-                        description: "Overall DEX statistics and metrics"
-                    },
-                    ...declareDiscoveryExtension({
-                        output: { example: { pairCount: 150, ethPrice: "$3500", tvl: "$5.2M" } }
-                    })
-                },
-                "POST /api/v1/backtest": {
-                    price: "$1.00",
-                    network: network as any,
-                    config: {
-                        description: "Run strategy backtest on historical data"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "bitcoin", strategy: "sma_crossover", days: 30 },
-                        inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "CoinGecko token ID" },
-                                strategy: { type: "string", description: "Strategy type" },
-                                days: { type: "number", description: "Backtest period" }
-                            },
-                            required: ["token", "strategy"]
-                        },
-                        bodyType: "json",
-                        output: { example: { totalReturn: "15.5%", winRate: 0.65, sharpeRatio: 1.8 } }
-                    })
-                },
-                "POST /api/v1/defi-yield": {
-                    price: "$0.05",
-                    network: network as any,
-                    config: {
-                        description: "DeFi yield opportunities for any token on Base"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { token: "USDC", riskTolerance: "medium" },
-                        inputSchema: {
-                            properties: {
-                                token: { type: "string", description: "Token symbol or address" },
-                                riskTolerance: { type: "string", description: "low, medium, or high" }
-                            },
-                            required: ["token"]
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, totalOpportunities: 5, bestApr: "12.5%", opportunities: [] } }
-                    })
-                },
-                "POST /api/v1/lp-analysis": {
-                    price: "$0.05",
-                    network: network as any,
-                    config: {
-                        description: "LP position analysis for token pairs"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { tokenPair: "USDC/WETH" },
-                        inputSchema: {
-                            properties: {
-                                tokenPair: { type: "string", description: "e.g., USDC/WETH" },
-                                tokenA: { type: "string" },
-                                tokenB: { type: "string" }
-                            }
-                        },
-                        bodyType: "json",
-                        output: { example: { success: true, positions: [], summary: { totalValue: "$10,000", weightedApr: "8.5%" } } }
-                    })
-                },
-                "GET /api/v1/top-pools": {
-                    price: "$0.03",
-                    network: network as any,
-                    config: {
-                        description: "Top yielding pools on Base DEXes"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, minTvl: 100000 },
-                        inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of pools (1-20)" },
-                                minTvl: { type: "number", description: "Minimum TVL in USD" }
-                            }
-                        },
-                        output: { example: { success: true, topPools: [{ name: "USDC/WETH", apr: "15.2%", tvl: "$2.5M" }] } }
-                    })
-                },
-                "GET /api/v1/top-protocols": {
-                    price: "$0.03",
-                    network: network as any,
-                    config: {
-                        description: "Top DeFi protocols by TVL"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, chain: "base" },
-                        inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of protocols (1-50)" },
-                                chain: { type: "string", description: "base, ethereum, arbitrum, or all" },
-                                category: { type: "string", description: "dex, lending, bridge, etc." }
-                            }
-                        },
-                        output: { example: { success: true, topProtocols: [{ name: "Aerodrome", tvl: "$1.2B", category: "DEX" }] } }
-                    })
-                },
-                "GET /api/v1/top-coins": {
-                    price: "$0.03",
-                    network: network as any,
-                    config: {
-                        description: "Top cryptocurrencies by market cap"
-                    },
-                    ...declareDiscoveryExtension({
-                        input: { limit: 10, chain: "all" },
-                        inputSchema: {
-                            properties: {
-                                limit: { type: "number", description: "Number of coins (1-50)" },
-                                chain: { type: "string", description: "base, ethereum, or all" }
-                            }
-                        },
-                        output: { example: { success: true, topCoins: [{ rank: 1, name: "Bitcoin", symbol: "BTC", price: "$95,000", marketCap: "$1.9T" }] } }
-                    })
-                }
-            },
+            routes,
             facilitatorConfig  // Use CDP mainnet facilitator
         )
     );
@@ -413,13 +546,20 @@ app.get('/health', (_req: Request, res: Response) => {
  * Service pricing info - helps discovery
  */
 app.get('/api/v1/pricing', (_req: Request, res: Response) => {
+    const isMainnet = X402_NETWORK === 'base';
     res.json({
         service: 'Silverback DEX Intelligence',
         description: 'DeFi trading intelligence and DEX execution on Silverback DEX',
         documentation: 'https://silverbackdefi.app/api-docs',
+        bazaar: {
+            discoverable: true,
+            listEndpoint: 'https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources'
+        },
         payment: {
-            network: 'base',
+            network: isMainnet ? 'eip155:8453' : 'eip155:84532',
+            networkName: isMainnet ? 'Base Mainnet' : 'Base Sepolia',
             token: 'USDC',
+            tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
             protocol: 'x402',
             wallet: X402_WALLET_ADDRESS || 'Not configured'
         },
@@ -1035,12 +1175,23 @@ export function startX402Server(): void {
 
     const PORT = parseInt(process.env.X402_PORT || '3402', 10);
 
+    const isMainnet = X402_NETWORK === 'base';
+    const networkDisplay = isMainnet ? 'Base Mainnet (eip155:8453)' : 'Base Sepolia (eip155:84532)';
+
     app.listen(PORT, () => {
         console.log(`\n🦍 Silverback x402 server running on port ${PORT}`);
         console.log(`   Wallet: ${X402_WALLET_ADDRESS}`);
-        console.log(`   Network: Base (USDC payments)`);
+        console.log(`   Network: ${networkDisplay}`);
+        console.log(`   Token: USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)`);
+        console.log(`   Bazaar: discoverable: true (11 endpoints)`);
         console.log(`   Pricing: GET /api/v1/pricing`);
-        console.log(`   Health: GET /health\n`);
+        console.log(`   Health: GET /health`);
+        if (isMainnet && hasCdpCredentials()) {
+            console.log(`   ✅ CDP facilitator configured - services will appear in Bazaar`);
+        } else if (isMainnet) {
+            console.log(`   ⚠️  CDP credentials missing - services will NOT appear in Bazaar`);
+        }
+        console.log('');
     });
 }
 
