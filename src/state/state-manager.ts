@@ -109,10 +109,21 @@ export class StateManager {
                     id SERIAL PRIMARY KEY,
                     content TEXT NOT NULL,
                     topic TEXT NOT NULL,
+                    format TEXT DEFAULT 'general',
                     posted_at TIMESTAMPTZ NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
+                CREATE INDEX IF NOT EXISTS idx_recent_tweets_format ON recent_tweets(format);
+
+                -- Add format column if it doesn't exist (migration)
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='recent_tweets' AND column_name='format') THEN
+                        ALTER TABLE recent_tweets ADD COLUMN format TEXT DEFAULT 'general';
+                    END IF;
+                END $$;
 
                 CREATE TABLE IF NOT EXISTS acp_job_queue (
                     id SERIAL PRIMARY KEY,
@@ -461,7 +472,7 @@ export class StateManager {
 
     // In-memory caches for when DB is not available
     private repliedTweetsCache: Set<string> = new Set();
-    private recentTweetsCache: { content: string; topic: string; posted_at: string }[] = [];
+    private recentTweetsCache: { content: string; topic: string; format: string; posted_at: string }[] = [];
 
     /**
      * Check if we've already replied to a tweet
@@ -528,10 +539,13 @@ export class StateManager {
 
     /**
      * Record a posted tweet for duplicate prevention
+     * @param content - The tweet content
+     * @param topic - The detected topic (btc, eth, defi_metrics, etc.)
+     * @param format - The format category (observation, alpha, engagement, wisdom, etc.)
      */
-    async recordPostedTweet(content: string, topic: string): Promise<void> {
+    async recordPostedTweet(content: string, topic: string, format: string = 'general'): Promise<void> {
         // Always update in-memory cache
-        this.recentTweetsCache.unshift({ content, topic, posted_at: new Date().toISOString() });
+        this.recentTweetsCache.unshift({ content, topic, format, posted_at: new Date().toISOString() });
         if (this.recentTweetsCache.length > 50) {
             this.recentTweetsCache = this.recentTweetsCache.slice(0, 50);
         }
@@ -539,8 +553,8 @@ export class StateManager {
         if (!pool) return;
         try {
             await pool.query(
-                'INSERT INTO recent_tweets (content, topic, posted_at) VALUES ($1, $2, NOW())',
-                [content, topic]
+                'INSERT INTO recent_tweets (content, topic, format, posted_at) VALUES ($1, $2, $3, NOW())',
+                [content, topic, format]
             );
 
             // Keep only last 50 tweets
@@ -556,14 +570,14 @@ export class StateManager {
     /**
      * Get recent tweets for duplicate checking
      */
-    async getRecentPostedTweets(hoursAgo: number = 4): Promise<{ content: string; topic: string; posted_at: string }[]> {
+    async getRecentPostedTweets(hoursAgo: number = 4): Promise<{ content: string; topic: string; format: string; posted_at: string }[]> {
         if (!pool) {
             const cutoff = Date.now() - (hoursAgo * 60 * 60 * 1000);
             return this.recentTweetsCache.filter(t => new Date(t.posted_at).getTime() > cutoff);
         }
         try {
             const result = await pool.query(`
-                SELECT content, topic, posted_at FROM recent_tweets
+                SELECT content, topic, format, posted_at FROM recent_tweets
                 WHERE posted_at > NOW() - INTERVAL '${hoursAgo} hours'
                 ORDER BY posted_at DESC
             `);
@@ -591,6 +605,35 @@ export class StateManager {
         } catch (e) {
             return [];
         }
+    }
+
+    /**
+     * Get recent formats to prevent repetitive content styles
+     * Returns formats used in the last N tweets
+     */
+    async getRecentFormats(limit: number = 3): Promise<string[]> {
+        if (!pool) {
+            const formats = this.recentTweetsCache.slice(0, limit).map(t => t.format);
+            return formats;
+        }
+        try {
+            const result = await pool.query(`
+                SELECT format FROM recent_tweets
+                ORDER BY posted_at DESC
+                LIMIT $1
+            `, [limit]);
+            return result.rows.map(r => r.format);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Check if a format was used recently (for variety enforcement)
+     */
+    async wasFormatUsedRecently(format: string, withinLastN: number = 2): Promise<boolean> {
+        const recentFormats = await this.getRecentFormats(withinLastN);
+        return recentFormats.includes(format);
     }
 
     // Close database connection (call on shutdown)

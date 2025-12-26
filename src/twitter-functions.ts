@@ -5,6 +5,13 @@ import {
 } from "@virtuals-protocol/game";
 import { twitterClient, postDailyStats, announceNewPool, getOwnUserId } from "./twitter";
 import { stateManager } from "./state/state-manager";
+import {
+    tweetTemplates,
+    templateCategories,
+    getWeightedRandomCategory,
+    getTemplateByCategory,
+    getNoDataTemplate
+} from "./tweet-templates";
 
 // Track tweets we've already replied to (in-memory cache + database)
 let repliedTweetIds: Set<string> = new Set();
@@ -88,6 +95,121 @@ function containsBannedPhrase(content: string): string | null {
 }
 
 /**
+ * Detect the format/style of a tweet based on its structure
+ * This helps enforce variety - if recent tweets are all "data_dump", force something different
+ */
+function detectFormat(content: string): string {
+    const lower = content.toLowerCase();
+
+    // Data dump format (the boring one we want to avoid)
+    // "BTC price is $X, ETH price is $Y" or "Current market: X, Y, Z"
+    if (
+        (lower.includes('price is') && lower.includes('change')) ||
+        (lower.includes('market update:') || lower.includes('market overview:')) ||
+        (lower.startsWith('current') && lower.includes(':')) ||
+        (lower.includes('btc') && lower.includes('eth') && lower.includes('%') && !lower.includes('?')) ||
+        /^\w+ price: \$[\d,]+/.test(lower)
+    ) {
+        return 'data_dump';
+    }
+
+    // Question/engagement format
+    if (lower.includes('?') && (lower.includes('what') || lower.includes('why') || lower.includes('who') || lower.includes('how'))) {
+        return 'engagement';
+    }
+
+    // Hot take format
+    if (lower.includes('hot take') || lower.includes('unpopular opinion') || lower.includes('flame me')) {
+        return 'observation';
+    }
+
+    // News reaction format
+    if (lower.includes('just saw') || lower.includes('breaking') || lower.includes('another') && (lower.includes('exploit') || lower.includes('hack') || lower.includes('rug'))) {
+        return 'news_reaction';
+    }
+
+    // Alpha/confident format
+    if (lower.includes('noted.') || lower.includes('watching.') || lower.includes('just saying.') || lower.includes('interesting.')) {
+        return 'alpha';
+    }
+
+    // Wisdom format
+    if (lower.includes('been in these jungles') || lower.includes('bear markets build') || lower.includes('bull markets reveal')) {
+        return 'wisdom';
+    }
+
+    // Protective format
+    if (lower.includes('pack,') || lower.includes('psa:') || lower.includes('scam') || lower.includes('rug')) {
+        return 'protective';
+    }
+
+    // Chill/humor format
+    if (lower.includes('never change') || lower.includes('love this place') || lower.includes("can't, i'm an ai")) {
+        return 'chill';
+    }
+
+    // Self-aware AI format
+    if (lower.includes('simulation') || lower.includes('algorithm') || lower.includes('3am')) {
+        return 'personal';
+    }
+
+    // Education format
+    if (lower.includes('myth:') || lower.includes('tip:') || lower.includes('reminder:')) {
+        return 'education';
+    }
+
+    // Default to observation if it has opinion/take energy
+    if (lower.includes('while') || lower.includes('but') || lower.includes('meanwhile')) {
+        return 'observation';
+    }
+
+    return 'general';
+}
+
+/**
+ * Detect if content is a boring data dump that should be blocked
+ * These are the repetitive "BTC price is $X" type posts
+ */
+function isBoringDataDump(content: string): { boring: boolean; reason?: string } {
+    const lower = content.toLowerCase();
+
+    // Pattern 1: "Market update: BTC price is $X..."
+    if (/market update:|market overview:/i.test(content)) {
+        return {
+            boring: true,
+            reason: "BORING: Don't start with 'Market update:'. Try a hot take, observation, or question instead."
+        };
+    }
+
+    // Pattern 2: Just listing prices with % changes without any commentary
+    if (/^\$?[A-Z]{2,5}( price)?:? ?\$[\d,]+.*\d+(\.\d+)?%/i.test(content) && !content.includes('?') && content.length < 150) {
+        return {
+            boring: true,
+            reason: "BORING: Just listing prices is lazy. Add an observation, hot take, or question. Example: '$BTC at $95k while alts bleed. dominance climbing. classic pre-alt-season or new normal?'"
+        };
+    }
+
+    // Pattern 3: "Current market trend is X"
+    if (/current market trend is (bullish|bearish|neutral)/i.test(content)) {
+        return {
+            boring: true,
+            reason: "BORING: 'Current market trend is X' is generic. Try: 'fear & greed at 28. last 3 times = 15%+ bounce. noted.' or ask a question."
+        };
+    }
+
+    // Pattern 4: Repetitive structure - "X is $Y with Z% change"
+    const priceChangePattern = /is \$[\d,.]+ with (a )?[\d.]+% change/i;
+    if (priceChangePattern.test(content)) {
+        return {
+            boring: true,
+            reason: "BORING: 'X is $Y with Z% change' is repetitive. Add personality! Try: '$BTC grinding toward $100k. dominance 54%. something's brewing.'"
+        };
+    }
+
+    return { boring: false };
+}
+
+/**
  * Detect the topic of a tweet
  */
 function detectTopic(content: string): string {
@@ -130,19 +252,54 @@ function detectTopic(content: string): string {
 }
 
 /**
+ * Get a random template suggestion for variety
+ */
+function getTemplateSuggestion(): string {
+    const category = getWeightedRandomCategory();
+    const template = getTemplateByCategory(category);
+    if (template) {
+        return `\n\nSUGGESTED FORMAT (${category}): "${template.format}"\nEXAMPLE: "${template.example}"`;
+    }
+    return '';
+}
+
+/**
  * Check if tweet should be blocked (uses database for persistence)
  */
-async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; reason?: string }> {
+async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; reason?: string; suggestion?: string }> {
     // Check for banned phrases first
     const bannedPhrase = containsBannedPhrase(newContent);
     if (bannedPhrase) {
         return {
             block: true,
-            reason: `BLOCKED: Contains "${bannedPhrase}". No hashtags, no marketing speak. Be natural - try a hot take, question, or observation.`
+            reason: `BLOCKED: Contains "${bannedPhrase}". No hashtags, no marketing speak. Be natural - try a hot take, question, or observation.${getTemplateSuggestion()}`
+        };
+    }
+
+    // Check for boring data dump patterns FIRST (most important!)
+    const boringCheck = isBoringDataDump(newContent);
+    if (boringCheck.boring) {
+        return {
+            block: true,
+            reason: `${boringCheck.reason}${getTemplateSuggestion()}`
         };
     }
 
     const newTopic = detectTopic(newContent);
+    const newFormat = detectFormat(newContent);
+
+    // Block data_dump format entirely - we want interesting content
+    if (newFormat === 'data_dump') {
+        return {
+            block: true,
+            reason: `BLOCKED: This is a boring data dump. Add personality! Try one of these formats:
+- HOT TAKE: "hot take: [opinion]. flame me below."
+- QUESTION: "why do [observation]? [your thought]"
+- ALPHA: "[data point]. [implication]. noted."
+- SARCASTIC: "[thing] happening and ct acts surprised. [reaction]"
+${getTemplateSuggestion()}`
+        };
+    }
 
     // Block promotional content
     if (newTopic === 'silverback_promo') {
@@ -152,14 +309,29 @@ async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; r
         };
     }
 
-    // Note: TVL/DeFi metrics are now allowed but will be rotated via topic tracking
+    // Check if same FORMAT was used in last 2 tweets
+    const recentFormats = await stateManager.getRecentFormats(2);
+    if (recentFormats.includes(newFormat) && newFormat !== 'general') {
+        // Find a format that wasn't used recently for suggestion
+        const unusedFormats = templateCategories.filter(f => !recentFormats.includes(f));
+        const suggestedFormat = unusedFormats[Math.floor(Math.random() * unusedFormats.length)];
+        const template = getTemplateByCategory(suggestedFormat);
+
+        return {
+            block: true,
+            reason: `BLOCKED: You used "${newFormat}" format in recent tweets. Switch it up!
+
+TRY "${suggestedFormat}" FORMAT:
+${template ? `Template: "${template.format}"\nExample: "${template.example}"` : 'Mix up your style!'}`
+        };
+    }
 
     // Check if same topic was posted recently (from database)
     const recentTopics = await stateManager.getRecentTopics(5);
     if (recentTopics.includes(newTopic) && newTopic !== 'general') {
         return {
             block: true,
-            reason: `BLOCKED: Already posted about "${newTopic}". Pick a DIFFERENT topic.`
+            reason: `BLOCKED: Already posted about "${newTopic}". Pick a DIFFERENT topic.${getTemplateSuggestion()}`
         };
     }
 
@@ -180,7 +352,7 @@ async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; r
         const overlapRatio = overlap / Math.max(newWords.size, recentWords.size);
 
         if (overlapRatio > 0.4) {
-            return { block: true, reason: `BLOCKED: ${Math.round(overlapRatio * 100)}% similar to recent tweet. Be more creative.` };
+            return { block: true, reason: `BLOCKED: ${Math.round(overlapRatio * 100)}% similar to recent tweet. Be more creative.${getTemplateSuggestion()}` };
         }
     }
 
@@ -255,15 +427,94 @@ async function validatePricesInTweet(content: string): Promise<{ valid: boolean;
 }
 
 /**
+ * Get a suggested tweet format for variety
+ * This helps the agent generate more interesting content
+ */
+export const getSuggestedFormatFunction = new GameFunction({
+    name: "get_suggested_format",
+    description: `Get a suggested tweet format to help you write interesting content. Use this BEFORE posting to get ideas for different formats.
+
+Returns a random format template with examples. Use this to break out of boring patterns!`,
+    args: [] as const,
+    executable: async (args, logger) => {
+        try {
+            // Get recent formats to avoid
+            const recentFormats = await stateManager.getRecentFormats(3);
+
+            // Get a format that wasn't used recently
+            const availableCategories = templateCategories.filter(c => !recentFormats.includes(c));
+            const category = availableCategories.length > 0
+                ? availableCategories[Math.floor(Math.random() * availableCategories.length)]
+                : getWeightedRandomCategory();
+
+            const template = getTemplateByCategory(category);
+
+            if (!template) {
+                const fallback = getNoDataTemplate();
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({
+                        success: true,
+                        category: fallback.category,
+                        format: fallback.format,
+                        example: fallback.example,
+                        tip: "Use this format structure to create your tweet!"
+                    })
+                );
+            }
+
+            logger(`Suggested format: ${category} - "${template.format}"`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    success: true,
+                    category: category,
+                    format: template.format,
+                    example: template.example,
+                    recently_used: recentFormats,
+                    tip: `Use the "${category}" format! Structure: ${template.format}`,
+                    data_needed: template.dataNeeded
+                })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to get suggested format: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
  * Post a tweet with DEX updates or insights
  */
 export const postTweetFunction = new GameFunction({
     name: "post_tweet",
-    description: "Post a tweet. IMPORTANT: You MUST vary your content! Do NOT post about the same topic twice. If you posted about DeFi/TVL, next post about something completely different like memecoins, yields, L2s, or a hot take. AVOID hashtags.",
+    description: `Post a tweet. CRITICAL: Boring "market update" posts will be BLOCKED!
+
+❌ BLOCKED FORMATS (will be rejected):
+- "Market update: BTC price is $X..."
+- "Current market trend is bullish/bearish/neutral"
+- "BTC is $X with Y% change, ETH is..."
+
+✅ GOOD FORMATS (use these instead):
+- HOT TAKE: "hot take: [contrarian view]. flame me below."
+- QUESTION: "why do memecoins pump on sundays? less institutional activity?"
+- ALPHA: "$SOL holding $180 while everything dumps. relative strength. noted."
+- SARCASTIC: "market dumps 5% and ct acts like it's 2022. same energy."
+- WISE: "bear markets build. bull markets reveal. we're still building."
+
+RULES:
+- NEVER start with "Market update:" or "Current market..."
+- ALWAYS add personality, opinion, or a question
+- Vary your FORMAT not just your topic
+- Use $SYMBOL format ($BTC, $ETH, $SOL)
+- NO hashtags`,
     args: [
         {
             name: "content",
-            description: "Tweet content (max 280 chars). MUST be different topic from recent posts. If blocked for similarity, try: altcoins, memecoins, yields, L2 comparison, market observation, or building update."
+            description: "Tweet content (max 280 chars). MUST have personality! Data dumps get blocked. Try: hot takes, questions, sarcasm, observations with opinions."
         }
     ] as const,
     executable: async (args, logger) => {
@@ -302,14 +553,15 @@ export const postTweetFunction = new GameFunction({
                 );
             }
 
-            // Detect and track topic
+            // Detect and track topic and format
             const topic = detectTopic(args.content);
+            const format = detectFormat(args.content);
 
-            logger(`Posting tweet (topic: ${topic}): "${args.content}"`);
+            logger(`Posting tweet (topic: ${topic}, format: ${format}): "${args.content}"`);
             const result = await twitterClient.v2.tweet(args.content);
 
-            // Track this tweet in database for persistence across restarts
-            await stateManager.recordPostedTweet(args.content, topic);
+            // Track this tweet in database for persistence across restarts (now with format)
+            await stateManager.recordPostedTweet(args.content, topic, format);
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
@@ -318,6 +570,7 @@ export const postTweetFunction = new GameFunction({
                     tweetId: result.data.id,
                     text: args.content,
                     topic: topic,
+                    format: format,
                     url: `https://x.com/user/status/${result.data.id}`
                 })
             );
@@ -438,8 +691,8 @@ export const postMarketMoversFunction = new GameFunction({
             logger(`Posting market movers: ${tweet}`);
             const result = await twitterClient.v2.tweet(tweet);
 
-            // Track as market_movers topic
-            await stateManager.recordPostedTweet(tweet, 'market_movers');
+            // Track as market_movers topic with proper format
+            await stateManager.recordPostedTweet(tweet, 'market_movers', 'alpha');
 
             return new ExecutableGameFunctionResponse(
                 ExecutableGameFunctionStatus.Done,
