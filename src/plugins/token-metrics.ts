@@ -1422,3 +1422,544 @@ export const getMarketMetricsFunction = new GameFunction({
         }
     }
 });
+
+/**
+ * Get Investor Grade - Long-term fundamental assessment
+ * Different from Trader Grade which focuses on short-term technical signals
+ */
+export const getInvestorGradeFunction = new GameFunction({
+    name: "get_investor_grade",
+    description: `Get Token Metrics INVESTOR Grade - long-term fundamental assessment.
+
+    This is DIFFERENT from Trader Grade:
+    - Trader Grade: Short-term technical signals (days/weeks)
+    - Investor Grade: Long-term fundamentals (months/years)
+
+    Datapoints:
+    - investor_grade: Overall long-term score (0-100)
+    - technology_grade: Tech quality, innovation, scalability
+    - fundamental_grade: Tokenomics, team, adoption
+    - valuation_grade: Is it overvalued or undervalued?
+    - ta_grade: Technical analysis component
+
+    Use for:
+    - Portfolio allocation decisions
+    - Long-term hold vs trade decisions
+    - Identifying fundamentally strong tokens
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "symbol",
+            description: "Token symbol (e.g., 'BTC', 'ETH', 'SOL')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.symbol) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Token symbol is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    symbol: args.symbol,
+                    note: "Configure TOKEN_METRICS_API_KEY for investor grades"
+                })
+            );
+        }
+
+        const cacheKey = `investor_grades:${args.symbol.toUpperCase()}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching Investor Grade for ${args.symbol}...`);
+
+            const data = await callAPI('investor-grades', { symbol: args.symbol.toUpperCase() });
+            trackApiCall('investorGrades');
+
+            const gradeData = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
+            if (!gradeData) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({ symbol: args.symbol, note: "No investor grade data found" })
+                );
+            }
+
+            const investorGrade = gradeData.INVESTOR_GRADE || gradeData.investor_grade || 0;
+            const techGrade = gradeData.TECHNOLOGY_GRADE || gradeData.technology_grade || 0;
+            const fundamentalGrade = gradeData.FUNDAMENTAL_GRADE || gradeData.fundamental_grade || 0;
+            const valuationGrade = gradeData.VALUATION_GRADE || gradeData.valuation_grade || 0;
+            const taGrade = gradeData.TA_GRADE || gradeData.ta_grade || 0;
+
+            // Determine recommendation
+            let recommendation: string;
+            let holdPeriod: string;
+            if (investorGrade >= 80) {
+                recommendation = 'STRONG_ACCUMULATE';
+                holdPeriod = 'Long-term hold (1+ years)';
+            } else if (investorGrade >= 65) {
+                recommendation = 'ACCUMULATE';
+                holdPeriod = 'Medium-term hold (6-12 months)';
+            } else if (investorGrade >= 50) {
+                recommendation = 'HOLD';
+                holdPeriod = 'Monitor for changes';
+            } else if (investorGrade >= 35) {
+                recommendation = 'REDUCE';
+                holdPeriod = 'Consider taking profits';
+            } else {
+                recommendation = 'AVOID';
+                holdPeriod = 'Weak fundamentals';
+            }
+
+            // Compare to trader grade for divergence detection
+            const traderGrade = gradeData.TM_GRADE || gradeData.tm_grade || 0;
+            let divergence: string | null = null;
+            if (Math.abs(investorGrade - traderGrade) > 20) {
+                if (investorGrade > traderGrade) {
+                    divergence = 'INVESTOR > TRADER: Good long-term fundamentals but short-term weakness. Accumulation opportunity?';
+                } else {
+                    divergence = 'TRADER > INVESTOR: Short-term momentum but weak fundamentals. Trade, don\'t invest.';
+                }
+            }
+
+            const result = {
+                symbol: args.symbol.toUpperCase(),
+                investorGrade: investorGrade,
+                components: {
+                    technology: techGrade,
+                    fundamental: fundamentalGrade,
+                    valuation: valuationGrade,
+                    technicalAnalysis: taGrade
+                },
+                traderGrade: traderGrade, // For comparison
+                divergence: divergence,
+                recommendation: recommendation,
+                holdPeriod: holdPeriod,
+                analysis: {
+                    isUndervalued: valuationGrade >= 60,
+                    hasSolidTech: techGrade >= 60,
+                    strongFundamentals: fundamentalGrade >= 60,
+                    overallOutlook: investorGrade >= 60 ? 'POSITIVE' : investorGrade >= 40 ? 'NEUTRAL' : 'NEGATIVE'
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`${args.symbol}: Investor Grade ${investorGrade}, Recommendation: ${recommendation}`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch investor grade: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Token Metrics AI Indices - Model portfolios
+ */
+export const getAIIndicesFunction = new GameFunction({
+    name: "get_ai_indices",
+    description: `Get Token Metrics AI-powered model portfolios (Indices).
+
+    These are curated crypto portfolios based on different strategies:
+    - Passive Index: Low-risk, diversified holdings
+    - Active Trader: Higher turnover, momentum-based
+    - DeFi Index: DeFi-focused tokens
+    - AI/Metaverse: Emerging tech tokens
+
+    Datapoints:
+    - index_name: Name of the portfolio
+    - tokens: List of tokens with weights
+    - rebalance_date: When portfolio was last rebalanced
+    - performance: Historical returns
+
+    Use for:
+    - Portfolio diversification ideas
+    - Understanding sector allocations
+    - Learning institutional allocation strategies
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "index_type",
+            description: "Index type: 'passive', 'active', 'defi', 'ai', or 'all' (default: all)"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    note: "Configure TOKEN_METRICS_API_KEY for AI indices"
+                })
+            );
+        }
+
+        const indexType = args.index_type?.toLowerCase() || 'all';
+        const cacheKey = `indices:${indexType}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching AI Indices (${indexType})...`);
+
+            const data = await callAPI('indices', { limit: 20 });
+            trackApiCall('indices');
+
+            const indicesData = Array.isArray(data) ? data : (data as any)?.data || [];
+            const indices = indicesData.map((idx: any) => ({
+                indexId: idx.INDEX_ID || idx.index_id,
+                name: idx.INDEX_NAME || idx.index_name,
+                description: idx.DESCRIPTION || idx.description,
+                tokens: idx.TOKENS || idx.tokens || [],
+                weights: idx.WEIGHTS || idx.weights || [],
+                performance: {
+                    daily: idx.DAILY_RETURN || idx.daily_return,
+                    weekly: idx.WEEKLY_RETURN || idx.weekly_return,
+                    monthly: idx.MONTHLY_RETURN || idx.monthly_return,
+                    yearly: idx.YEARLY_RETURN || idx.yearly_return
+                },
+                rebalanceDate: idx.REBALANCE_DATE || idx.rebalance_date,
+                riskLevel: idx.RISK_LEVEL || idx.risk_level
+            }));
+
+            const result = {
+                indexType: indexType,
+                indices: indices,
+                topPerformer: indices.reduce((best: any, curr: any) =>
+                    (curr.performance?.monthly || 0) > (best?.performance?.monthly || 0) ? curr : best, null),
+                learningInsights: [
+                    'AI indices show how professionals allocate across crypto sectors',
+                    'Compare your portfolio allocation to these benchmarks',
+                    'Note rebalance dates - major allocation shifts signal market views'
+                ],
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`Found ${indices.length} AI indices`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch indices: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Quantitative Metrics - Advanced analytics
+ */
+export const getQuantMetricsFunction = new GameFunction({
+    name: "get_quant_metrics",
+    description: `Get advanced quantitative metrics for a token.
+
+    Datapoints:
+    - sharpe_ratio: Risk-adjusted return (higher is better, >1 is good)
+    - sortino_ratio: Downside risk-adjusted return
+    - max_drawdown: Largest peak-to-trough decline
+    - volatility: Standard deviation of returns
+    - beta: Correlation with BTC (>1 = more volatile than BTC)
+    - alpha: Excess return vs BTC
+
+    Use for:
+    - Risk assessment before trading
+    - Portfolio risk management
+    - Comparing tokens on risk-adjusted basis
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "symbol",
+            description: "Token symbol (e.g., 'ETH', 'SOL')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.symbol) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Token symbol is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    symbol: args.symbol,
+                    note: "Configure TOKEN_METRICS_API_KEY for quant metrics"
+                })
+            );
+        }
+
+        const cacheKey = `quant:${args.symbol.toUpperCase()}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching quant metrics for ${args.symbol}...`);
+
+            const data = await callAPI('quantmetrics', { symbol: args.symbol.toUpperCase() });
+            trackApiCall('quantMetrics');
+
+            const metricsData = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
+            if (!metricsData) {
+                return new ExecutableGameFunctionResponse(
+                    ExecutableGameFunctionStatus.Done,
+                    JSON.stringify({ symbol: args.symbol, note: "No quant metrics found" })
+                );
+            }
+
+            const sharpe = metricsData.SHARPE_RATIO || metricsData.sharpe_ratio || 0;
+            const sortino = metricsData.SORTINO_RATIO || metricsData.sortino_ratio || 0;
+            const maxDrawdown = metricsData.MAX_DRAWDOWN || metricsData.max_drawdown || 0;
+            const volatility = metricsData.VOLATILITY || metricsData.volatility || 0;
+            const beta = metricsData.BETA || metricsData.beta || 1;
+            const alpha = metricsData.ALPHA || metricsData.alpha || 0;
+
+            // Risk assessment
+            let riskLevel: string;
+            let positionSizeAdvice: string;
+            if (volatility > 100 || maxDrawdown < -50) {
+                riskLevel = 'EXTREME';
+                positionSizeAdvice = 'Maximum 0.5% of portfolio per trade';
+            } else if (volatility > 70 || maxDrawdown < -30) {
+                riskLevel = 'HIGH';
+                positionSizeAdvice = 'Maximum 1% of portfolio per trade';
+            } else if (volatility > 40) {
+                riskLevel = 'MEDIUM';
+                positionSizeAdvice = 'Maximum 2% of portfolio per trade';
+            } else {
+                riskLevel = 'LOW';
+                positionSizeAdvice = 'Standard position sizing (up to 3%)';
+            }
+
+            // Quality assessment
+            let qualityScore: string;
+            if (sharpe > 2 && sortino > 2) {
+                qualityScore = 'EXCELLENT - Strong risk-adjusted returns';
+            } else if (sharpe > 1 && sortino > 1) {
+                qualityScore = 'GOOD - Positive risk-adjusted returns';
+            } else if (sharpe > 0) {
+                qualityScore = 'FAIR - Marginal risk-adjusted returns';
+            } else {
+                qualityScore = 'POOR - Negative risk-adjusted returns';
+            }
+
+            const result = {
+                symbol: args.symbol.toUpperCase(),
+                metrics: {
+                    sharpeRatio: sharpe,
+                    sortinoRatio: sortino,
+                    maxDrawdown: `${maxDrawdown}%`,
+                    volatility: `${volatility}%`,
+                    beta: beta,
+                    alpha: `${alpha}%`
+                },
+                interpretation: {
+                    sharpe: sharpe > 1 ? 'Good risk-adjusted return' : 'Below-average risk-adjusted return',
+                    beta: beta > 1.5 ? 'Much more volatile than BTC' : beta > 1 ? 'More volatile than BTC' : 'Less volatile than BTC',
+                    drawdown: maxDrawdown < -40 ? 'High drawdown risk' : 'Manageable drawdown'
+                },
+                riskAssessment: {
+                    level: riskLevel,
+                    positionSizeAdvice: positionSizeAdvice,
+                    qualityScore: qualityScore
+                },
+                tradingImplications: {
+                    useWiderStops: volatility > 50,
+                    reduceLeverage: beta > 1.5,
+                    expectDrawdowns: maxDrawdown < -30
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`${args.symbol}: Sharpe ${sharpe.toFixed(2)}, Risk: ${riskLevel}`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch quant metrics: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});
+
+/**
+ * Get Token Correlation Data
+ */
+export const getCorrelationDataFunction = new GameFunction({
+    name: "get_correlation_data",
+    description: `Get correlation data between tokens and BTC/market.
+
+    Understanding correlation helps with:
+    - Portfolio diversification (low correlation = better diversification)
+    - Risk management (high BTC correlation = moves with market)
+    - Finding uncorrelated alpha opportunities
+
+    Correlation ranges from -1 to 1:
+    - 1.0: Moves exactly with BTC
+    - 0.0: No relationship to BTC
+    - -1.0: Moves opposite to BTC (rare in crypto)
+
+    IMPORTANT: ~16 calls/day limit. Results cached 4 hours.`,
+    args: [
+        {
+            name: "symbol",
+            description: "Token symbol (e.g., 'ETH', 'SOL')"
+        }
+    ] as const,
+    executable: async (args, logger) => {
+        if (!args.symbol) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                "Token symbol is required"
+            );
+        }
+
+        if (!isTokenMetricsAvailable() || !client) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({
+                    symbol: args.symbol,
+                    note: "Configure TOKEN_METRICS_API_KEY for correlation data"
+                })
+            );
+        }
+
+        const cacheKey = `correlation:${args.symbol.toUpperCase()}`;
+        const cached = getCached(cacheKey);
+        if (cached) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "cache", ...cached })
+            );
+        }
+
+        if (!canMakeApiCall()) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Daily API limit reached. Try again tomorrow.`
+            );
+        }
+
+        try {
+            logger(`Fetching correlation data for ${args.symbol}...`);
+
+            // Try to get from quant metrics or dedicated endpoint
+            const data = await callAPI('quantmetrics', { symbol: args.symbol.toUpperCase() });
+            trackApiCall('correlation');
+
+            const metricsData = Array.isArray(data) ? data[0] : (data as any)?.data?.[0] || data;
+
+            const btcCorrelation = metricsData?.BTC_CORRELATION || metricsData?.btc_correlation ||
+                metricsData?.BETA || metricsData?.beta || 0.8; // Default high correlation
+
+            // Interpret correlation
+            let correlationLevel: string;
+            let diversificationValue: string;
+            if (btcCorrelation > 0.8) {
+                correlationLevel = 'VERY_HIGH';
+                diversificationValue = 'LOW - Moves closely with BTC, limited diversification benefit';
+            } else if (btcCorrelation > 0.6) {
+                correlationLevel = 'HIGH';
+                diversificationValue = 'MODERATE - Some diversification benefit';
+            } else if (btcCorrelation > 0.3) {
+                correlationLevel = 'MEDIUM';
+                diversificationValue = 'GOOD - Meaningful diversification benefit';
+            } else {
+                correlationLevel = 'LOW';
+                diversificationValue = 'EXCELLENT - Strong diversification benefit';
+            }
+
+            const result = {
+                symbol: args.symbol.toUpperCase(),
+                btcCorrelation: btcCorrelation,
+                correlationLevel: correlationLevel,
+                diversificationValue: diversificationValue,
+                tradingImplications: {
+                    inBullMarket: btcCorrelation > 0.7
+                        ? 'Will likely rise with BTC - good for momentum'
+                        : 'May outperform or underperform BTC independently',
+                    inBearMarket: btcCorrelation > 0.7
+                        ? 'Will likely fall with BTC - consider hedging'
+                        : 'May provide some downside protection',
+                    forPortfolio: btcCorrelation < 0.5
+                        ? 'Good diversifier - add to portfolio'
+                        : 'Limited diversification - already correlated to BTC'
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            setCache(cacheKey, result);
+            logger(`${args.symbol}: BTC Correlation ${btcCorrelation.toFixed(2)} (${correlationLevel})`);
+
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Done,
+                JSON.stringify({ source: "tokenmetrics_sdk", ...result })
+            );
+        } catch (e) {
+            return new ExecutableGameFunctionResponse(
+                ExecutableGameFunctionStatus.Failed,
+                `Failed to fetch correlation: ${e instanceof Error ? e.message : 'Unknown error'}`
+            );
+        }
+    }
+});

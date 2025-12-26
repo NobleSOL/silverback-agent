@@ -99,6 +99,55 @@ Support and Resistance:
 - In crypto, watch for cluster zones rather than exact levels due to 24/7 trading
 - Combine with on-chain data: Are whales accumulating at support?
 
+=== SESSION-BASED TRADING (ICT Killzones) ===
+
+Understanding Global Market Sessions:
+Crypto trades 24/7, but institutional money follows traditional market hours.
+Knowing WHEN to trade is as important as knowing WHAT to trade.
+
+Trading Sessions (UTC):
+- Sydney Session (21:00-06:00 UTC): Lowest volume, range establishment
+- Tokyo/Asian Session (00:00-09:00 UTC): Moderate volume, sets daily range
+- London Session (07:00-16:00 UTC): Highest volume, major moves start here
+- New York Session (12:00-21:00 UTC): Second highest, trend continuation
+
+High Probability Windows (Killzones):
+1. London Open Killzone (07:00-10:00 UTC):
+   - Institutions enter, sweep Asian session range
+   - Look for: Asian high/low taken out, then reversal
+   - Best for: Fade the sweep, catch the real move
+
+2. New York Open Killzone (12:00-15:00 UTC):
+   - US institutions enter, often sweep London range
+   - Look for: Continuation of London trend OR reversal
+   - NYSE opens 13:30 UTC - watch for correlation with SPX
+
+3. London-NY Overlap (12:00-16:00 UTC):
+   - MAXIMUM liquidity and volatility
+   - Best conditions for momentum trades
+   - Avoid mean reversion during overlap
+
+Liquidity Sweeps:
+- Price often sweeps above/below a range to trigger stop losses
+- Smart money enters AFTER the sweep, in opposite direction
+- Example: Price breaks Asian low, triggers longs' stops, then reverses up
+- Wait for sweep + reversal candle before entering
+
+Day of Week Patterns:
+- Monday: Sets weekly direction, watch for Sunday gaps
+- Tuesday: Often continuation of Monday, good trending day
+- Wednesday: Midweek reversal possible, watch for FOMC
+- Thursday: Volatile, US data releases, can be choppy
+- Friday: Position squaring, avoid holding into weekend
+- Weekend: Low liquidity, moves often reversed Monday
+
+Session-Based Strategy:
+1. Mark Asian session high/low before London opens
+2. Wait for London to sweep one side with volume
+3. Enter on reversal after sweep with tight stop
+4. Target the opposite side of the range
+5. Exit before sessions change (liquidity drops)
+
 === ON-CHAIN ANALYSIS EXPERTISE ===
 
 Whale Wallet Tracking:
@@ -141,6 +190,33 @@ Smart Contract Risk Assessment:
 - Are there hidden fees or transfer restrictions?
 - Proxy contract that can be upgraded? (Risk if not timelock/multi-sig)
 - Use tools: Token Sniffer, Honeypot detector, contract readers
+
+=== FUTURES MARKET SIGNALS ===
+
+Funding Rates (Critical Contrarian Indicator):
+- Positive funding: Longs pay shorts = Market overleveraged long
+- Negative funding: Shorts pay longs = Market overleveraged short
+- Extreme positive (>0.1%): Consider shorting - crowd is wrong
+- Extreme negative (<-0.1%): Consider longing - crowd is wrong
+- Funding resets every 8 hours on most exchanges
+- Best trades often go AGAINST extreme funding readings
+- Combine with price action for confirmation
+
+Open Interest (OI) Analysis:
+- OI = Total value of open futures/perpetual contracts
+- Rising OI + Rising Price = New longs entering (bullish)
+- Rising OI + Falling Price = New shorts entering (bearish)
+- Falling OI + Rising Price = Short covering (potential exhaustion)
+- Falling OI + Falling Price = Long liquidation (potential exhaustion)
+- High OI = High leverage in market = Liquidation cascade risk
+- Use OI to gauge conviction behind price moves
+
+Liquidation Levels:
+- Map where concentrated long/short positions are leveraged
+- Price moves to these levels to trigger liquidation cascades
+- Liquidations create volatility but also opportunity
+- After cascade, often see reversal (liquidity harvested)
+- Monitor liquidation maps for key levels to watch
 
 === RISK MANAGEMENT FRAMEWORK ===
 
