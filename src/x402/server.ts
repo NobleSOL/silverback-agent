@@ -571,14 +571,14 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
             {
                 method: 'POST',
                 path: '/api/v1/swap-quote',
-                price: '$0.02',
+                price: '$0.01',
                 description: 'Get optimal swap route with price impact',
                 parameters: { tokenIn: '0x address', tokenOut: '0x address', amountIn: 'human-readable amount' }
             },
             {
                 method: 'POST',
                 path: '/api/v1/pool-analysis',
-                price: '$0.10',
+                price: '$0.02',
                 description: 'Liquidity pool deep dive with health scoring',
                 parameters: { tokenA: '0x address', tokenB: '0x address' }
             },
@@ -612,35 +612,35 @@ app.get('/api/v1/pricing', (_req: Request, res: Response) => {
             {
                 method: 'POST',
                 path: '/api/v1/defi-yield',
-                price: '$0.05',
+                price: '$0.02',
                 description: 'DeFi yield opportunities for any token on Base',
                 parameters: { token: 'symbol (USDC, WETH, cbBTC) or address', riskTolerance: 'low/medium/high (default: medium)' }
             },
             {
                 method: 'POST',
                 path: '/api/v1/lp-analysis',
-                price: '$0.05',
+                price: '$0.02',
                 description: 'LP position analysis for token pairs',
                 parameters: { tokenPair: 'e.g., USDC/WETH', tokenA: 'symbol', tokenB: 'symbol' }
             },
             {
                 method: 'GET',
                 path: '/api/v1/top-pools',
-                price: '$0.03',
+                price: '$0.01',
                 description: 'Top yielding pools on Base DEXes',
                 parameters: { limit: 'number (default: 10)', minTvl: 'USD (default: 100000)' }
             },
             {
                 method: 'GET',
                 path: '/api/v1/top-protocols',
-                price: '$0.03',
+                price: '$0.01',
                 description: 'Top DeFi protocols by TVL',
                 parameters: { limit: 'number (default: 10)', chain: 'chain name (default: base)', category: 'dex/lending/etc (optional)' }
             },
             {
                 method: 'GET',
                 path: '/api/v1/top-coins',
-                price: '$0.03',
+                price: '$0.01',
                 description: 'Top cryptocurrencies by market cap',
                 parameters: { limit: 'number (default: 10)', chain: 'chain name (default: all)' }
             }
