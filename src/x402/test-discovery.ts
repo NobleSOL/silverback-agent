@@ -80,23 +80,35 @@ async function queryDiscovery(): Promise<void> {
         const data = await response.json();
         console.log(`✅ Found ${data.resources?.length || 0} resources in Bazaar:\n`);
 
-        // Check if our service is listed
-        const ourService = data.resources?.find((r: any) =>
-            r.url?.includes('silverback') || r.url?.includes(X402_SERVICE_URL)
+        // Check if our service is listed (check both items array and resources array for compatibility)
+        const resources = data.items || data.resources || [];
+        const ourServices = resources.filter((r: any) =>
+            r.resource?.includes('silverback') || r.url?.includes('silverback')
         );
 
-        if (ourService) {
-            console.log('🦍 SILVERBACK SERVICE FOUND:');
-            console.log(JSON.stringify(ourService, null, 2));
+        if (ourServices.length > 0) {
+            console.log(`🦍 SILVERBACK SERVICES FOUND (${ourServices.length}):\n`);
+            ourServices.forEach((service: any, i: number) => {
+                const url = service.resource || service.url;
+                const accepts = service.accepts?.[0];
+                console.log(`   ${i + 1}. ${url}`);
+                console.log(`      - Version: x402 v${service.x402Version}`);
+                console.log(`      - Price: ${accepts?.amount ? (parseInt(accepts.amount) / 1e6).toFixed(4) : accepts?.maxAmountRequired ? (parseInt(accepts.maxAmountRequired) / 1e6).toFixed(4) : 'N/A'} USDC`);
+                console.log(`      - PayTo: ${accepts?.payTo}`);
+                console.log(`      - Last Updated: ${service.lastUpdated}`);
+                console.log(`      - Metadata: ${JSON.stringify(service.metadata || {})}`);
+                console.log('');
+            });
         } else {
-            console.log('⚠️  Silverback service not found in discovery results');
-            console.log('\nAll discovered resources:');
-            data.resources?.forEach((r: any, i: number) => {
-                console.log(`  ${i + 1}. ${r.url} (${r.type})`);
+            console.log('⚠️  Silverback services not found in discovery results');
+            console.log('\nSample discovered resources (first 10):');
+            resources.slice(0, 10).forEach((r: any, i: number) => {
+                const url = r.resource || r.url;
+                console.log(`  ${i + 1}. ${url} (v${r.x402Version})`);
             });
         }
 
-        console.log(`\nTotal: ${data.total || data.resources?.length || 0} resources`);
+        console.log(`\nTotal in Bazaar: ${data.total || resources.length || 0} resources`);
 
     } catch (err: any) {
         console.error('❌ Error querying discovery:', err.message);
