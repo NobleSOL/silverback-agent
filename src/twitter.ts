@@ -102,8 +102,14 @@ async function getDexStats(): Promise<{
 
 /**
  * Post daily Silverback DEX statistics to Twitter
+ * DISABLED: DEX not ready yet - no pools. Do not post DEX stats until instructed.
  */
 export async function postDailyStats() {
+    console.log('⚠️ postDailyStats DISABLED - DEX not ready, no pools yet');
+    console.log('   Focus on Virtuals token sale promotion instead');
+    return; // Disabled until DEX has pools
+
+    /* DISABLED - DO NOT ENABLE UNTIL DEX IS READY
     try {
         const stats = await getDexStats();
 
@@ -124,6 +130,7 @@ Trade on Base → silverbackdefi.app
         console.error('❌ Failed to post daily stats:', error);
         throw error;
     }
+    */
 }
 
 /**

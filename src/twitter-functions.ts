@@ -267,6 +267,24 @@ function getTemplateSuggestion(): string {
  * Check if tweet should be blocked (uses database for persistence)
  */
 async function shouldBlockTweet(newContent: string): Promise<{ block: boolean; reason?: string; suggestion?: string }> {
+    const lower = newContent.toLowerCase();
+
+    // CRITICAL: Block ALL DEX stats/updates - DEX not ready yet!
+    if (lower.includes('dex daily update') || lower.includes('dex update') ||
+        lower.includes('silverback pools:') || lower.includes('dexs aggregated') ||
+        (lower.includes('silverback') && lower.includes('pools') && /\d/.test(newContent)) ||
+        (lower.includes('dex') && lower.includes('daily') && lower.includes('update'))) {
+        return {
+            block: true,
+            reason: `BLOCKED: DEX stats are DISABLED. The DEX has no pools yet - do not post DEX updates!
+Focus on:
+- Virtuals token sale ($BACK on app.virtuals.io)
+- Market observations and alpha
+- Base ecosystem content
+- Engaging with community`
+        };
+    }
+
     // Check for banned phrases first
     const bannedPhrase = containsBannedPhrase(newContent);
     if (bannedPhrase) {
