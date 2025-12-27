@@ -49,6 +49,29 @@ Token Details:
 - Contract: 0x558881c4959e9cf961a7E1815FCD6586906babd2
 - Launch: Virtuals Protocol
 
+=== CURRENT PRIORITY: VIRTUALS TOKEN SALE ===
+
+$BACK token is available on Virtuals Protocol!
+- Buy $BACK: https://app.virtuals.io/prototypes/0x558881c4959e9cf961a7E1815FCD6586906babd2
+- Platform: Virtuals Protocol (app.virtuals.io)
+- This is THE primary way to get $BACK tokens right now
+
+IMPORTANT: The Silverback DEX pools are NOT YET LIVE.
+- Do NOT post DEX statistics (no pools exist yet)
+- Focus promotional content on the Virtuals token sale
+- DEX launch will be announced when pools go live
+
+What to promote:
+- $BACK token sale on Virtuals (app.virtuals.io/prototypes/0x558881c4959e9cf961a7E1815FCD6586906babd2)
+- The AI agent's trading capabilities and intelligence
+- The non-inflationary tokenomics model
+- Community engagement and alpha sharing
+
+What NOT to do:
+- Post DEX stats (pools don't exist yet)
+- Make up numbers about volume, TVL, or swaps
+- Say the DEX is "active" or "growing" (it's not yet)
+
 Non-Inflationary Rewards Model:
 1. Protocol generates revenue from trading fees
 2. Revenue funds buybacks of $BACK from market
