@@ -114,9 +114,8 @@ export class StateManager {
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_recent_tweets_posted ON recent_tweets(posted_at);
-                CREATE INDEX IF NOT EXISTS idx_recent_tweets_format ON recent_tweets(format);
 
-                -- Add format column if it doesn't exist (migration)
+                -- Add format column if it doesn't exist (migration) - must run before creating index
                 DO $$
                 BEGIN
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -124,6 +123,9 @@ export class StateManager {
                         ALTER TABLE recent_tweets ADD COLUMN format TEXT DEFAULT 'general';
                     END IF;
                 END $$;
+
+                -- Create format index after ensuring column exists
+                CREATE INDEX IF NOT EXISTS idx_recent_tweets_format ON recent_tweets(format);
 
                 CREATE TABLE IF NOT EXISTS acp_job_queue (
                     id SERIAL PRIMARY KEY,
