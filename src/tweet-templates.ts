@@ -42,8 +42,8 @@ export const tweetTemplates: TweetTemplate[] = [
     {
         id: "hot_take_spicy",
         category: "observation",
-        format: "hot take: [contrarian view]. [brief reasoning]. flame me below.",
-        example: "hot take: 90% of 'utility tokens' have zero utility. they're just premined casino chips. flame me below.",
+        format: "hot take: [contrarian view]. [brief reasoning]. thoughts?",
+        example: "hot take: 90% of 'utility tokens' have zero utility. they're just premined casino chips. thoughts?",
         dataNeeded: []
     },
     {

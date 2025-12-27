@@ -119,7 +119,7 @@ function detectFormat(content: string): string {
     }
 
     // Hot take format
-    if (lower.includes('hot take') || lower.includes('unpopular opinion') || lower.includes('flame me')) {
+    if (lower.includes('hot take') || lower.includes('unpopular opinion') || lower.includes('prove me wrong')) {
         return 'observation';
     }
 
@@ -285,6 +285,14 @@ Focus on:
         };
     }
 
+    // Block aggressive/negative language like "flame me"
+    if (lower.includes('flame me') || lower.includes('roast me') || lower.includes('fight me')) {
+        return {
+            block: true,
+            reason: `BLOCKED: Avoid aggressive language like "flame me". Use "thoughts?" or "prove me wrong." instead.`
+        };
+    }
+
     // Check for banned phrases first
     const bannedPhrase = containsBannedPhrase(newContent);
     if (bannedPhrase) {
@@ -311,7 +319,7 @@ Focus on:
         return {
             block: true,
             reason: `BLOCKED: This is a boring data dump. Add personality! Try one of these formats:
-- HOT TAKE: "hot take: [opinion]. flame me below."
+- HOT TAKE: "hot take: [opinion]. thoughts?"
 - QUESTION: "why do [observation]? [your thought]"
 - ALPHA: "[data point]. [implication]. noted."
 - SARCASTIC: "[thing] happening and ct acts surprised. [reaction]"
@@ -517,7 +525,7 @@ export const postTweetFunction = new GameFunction({
 - "BTC is $X with Y% change, ETH is..."
 
 ✅ GOOD FORMATS (use these instead):
-- HOT TAKE: "hot take: [contrarian view]. flame me below."
+- HOT TAKE: "hot take: [contrarian view]. thoughts?"
 - QUESTION: "why do memecoins pump on sundays? less institutional activity?"
 - ALPHA: "$SOL holding $180 while everything dumps. relative strength. noted."
 - SARCASTIC: "market dumps 5% and ct acts like it's 2022. same energy."
