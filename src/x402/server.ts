@@ -263,7 +263,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.01",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Get optimal swap route with price impact analysis for Base DEX trades"
             },
             description: "Get optimal swap route with price impact analysis",
             mimeType: "application/json",
@@ -290,7 +291,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.02",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Comprehensive liquidity pool analysis with health scoring on Base"
             },
             description: "Comprehensive liquidity pool analysis with health scoring",
             mimeType: "application/json",
@@ -316,7 +318,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.25",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Full technical analysis with RSI, MACD, Bollinger Bands, and trading signals"
             },
             description: "Full technical analysis with indicators, patterns, and signals",
             mimeType: "application/json",
@@ -342,7 +345,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.50",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Execute token swap on Base via Silverback DEX aggregator"
             },
             description: "Execute swap on Silverback DEX",
             mimeType: "application/json",
@@ -370,7 +374,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.05",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Silverback DEX statistics including TVL, volume, and supported tokens"
             },
             description: "Overall DEX statistics and metrics",
             mimeType: "application/json",
@@ -387,7 +392,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.02",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Find best DeFi yield opportunities for any token on Base network"
             },
             description: "DeFi yield opportunities for any token on Base",
             mimeType: "application/json",
@@ -413,7 +419,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.02",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Liquidity provider position analysis with APR and impermanent loss"
             },
             description: "LP position analysis for token pairs",
             mimeType: "application/json",
@@ -439,7 +446,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.01",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Top yielding liquidity pools on Base DEXes by APR"
             },
             description: "Top yielding pools on Base DEXes",
             mimeType: "application/json",
@@ -463,7 +471,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.01",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Top DeFi protocols ranked by TVL with chain breakdown"
             },
             description: "Top DeFi protocols by TVL",
             mimeType: "application/json",
@@ -488,7 +497,8 @@ async function initializeServer() {
                 scheme: "exact",
                 payTo: X402_WALLET_ADDRESS,
                 price: "$0.01",
-                network: NETWORK_CAIP2
+                network: NETWORK_CAIP2,
+                description: "Top cryptocurrencies ranked by market cap with price data"
             },
             description: "Top cryptocurrencies by market cap",
             mimeType: "application/json",
