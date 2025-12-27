@@ -114,6 +114,25 @@ async function main() {
                 method: 'POST',
                 price: '$0.25',
                 body: { token: 'bitcoin', timeframe: '7' }
+            },
+            {
+                name: 'dex-metrics',
+                path: '/api/v1/dex-metrics',
+                method: 'GET',
+                price: '$0.05',
+                body: null
+            },
+            {
+                name: 'swap',
+                path: '/api/v1/swap',
+                method: 'POST',
+                price: '$0.50',
+                body: {
+                    tokenIn: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
+                    tokenOut: '0x4200000000000000000000000000000000000006', // WETH
+                    amountIn: '0.01',  // Small amount for testing
+                    slippage: '1.0'
+                }
             }
         ];
 
