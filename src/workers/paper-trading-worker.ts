@@ -26,8 +26,31 @@ import {
     getDailyOHLCVFunction,
     getMarketMetricsFunction,
     isTokenMetricsAvailable,
-    getApiUsageStats
+    getApiUsageStats,
+    getInvestorGradeFunction,
+    getAIIndicesFunction,
+    getQuantMetricsFunction,
+    getCorrelationDataFunction
 } from '../plugins/token-metrics';
+// NEW: Import enhanced modules for better learning
+import {
+    analyzeCurrentSession,
+    isOptimalTradeWindow,
+    getSessionScoreModifier,
+    getSessionBias,
+    getDayOfWeekBias
+} from '../market-data/sessions';
+import {
+    getOnChainAnalysisFunction,
+    getWhaleAlertsFunction,
+    getFundingRatesFunction,
+    getOpenInterestFunction
+} from '../market-data/onchain-analytics';
+import {
+    runBacktestFunction,
+    compareStrategiesFunction,
+    getSessionAnalysisFunction
+} from '../market-data/backtest';
 
 // Token symbol mapping for common addresses
 const TOKEN_SYMBOLS: Record<string, string> = {
@@ -435,6 +458,7 @@ export const simulateTradeFunction = new GameFunction({
 /**
  * Paper Trading Worker
  * Handles simulated trading for learning and strategy testing
+ * ENHANCED with session awareness, on-chain analytics, and backtesting
  */
 export const paperTradingWorker = new GameWorker({
     id: "paper_trading_worker",
@@ -443,60 +467,112 @@ export const paperTradingWorker = new GameWorker({
 
     This worker is for TESTING AND LEARNING ONLY - no real money is used.
 
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                    ENHANCED LEARNING TOOLKIT                       ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+
+    === NEW: SESSION-BASED TRADING (ICT Killzones) ===
+
+    ALWAYS check session before trading:
+    - get_session_analysis: See if you're in a high-probability window
+    - London Open (07:00-10:00 UTC): Best for Asian range sweeps
+    - NY Open (12:00-15:00 UTC): Best for London range sweeps
+    - AVOID trading outside killzones for better win rate!
+
+    === NEW: ON-CHAIN ANALYTICS ===
+
+    Check whale behavior before trading:
+    - get_onchain_analysis: See if whales are accumulating or distributing
+    - get_whale_alerts: Spot large transactions moving to/from exchanges
+    - get_funding_rates: Check if market is overleveraged (contrarian signal!)
+    - get_open_interest: Understand market positioning
+
+    === NEW: BACKTESTING ===
+
+    Validate strategies before paper trading:
+    - run_backtest: Test strategy on historical data
+    - compare_strategies: Find which strategy works best
+
+    === NEW: ADVANCED TOKEN METRICS ===
+
+    - get_investor_grade: Long-term fundamental assessment
+    - get_quant_metrics: Sharpe ratio, max drawdown, risk metrics
+    - get_correlation_data: BTC correlation for diversification
+    - get_ai_indices: AI model portfolios for allocation ideas
+
     === TOKEN METRICS INTEGRATION ===
 
-    You have access to Token Metrics AI signals (if API key configured).
-    Use these BEFORE making trade decisions for better accuracy:
-    - get_ai_trading_signals: Get AI buy/sell/hold recommendations
-    - get_token_grades: Get technology and fundamental grades for tokens
-    - get_resistance_support: Get key price levels for entries/exits
+    Core signals for 70% win rate:
+    - get_ai_trading_signals: AI buy/sell/hold recommendations
+    - get_token_grades: Technology and fundamental grades
+    - get_resistance_support: Key price levels
+    - IMPORTANT: ~16 calls/day limit. Results cached 4 hours.
 
-    IMPORTANT: Token Metrics has ~16 calls/day limit (500/month free tier).
-    Results are cached for 4 hours. Use strategically!
+    === OPTIMAL TRADING WORKFLOW ===
 
-    === CRITICAL: PRE-TRADE ANALYSIS ===
+    BEFORE EACH TRADE:
+    1. 📊 get_session_analysis → Am I in a killzone?
+    2. 🐋 get_onchain_analysis → Are whales buying or selling?
+    3. 💹 get_funding_rates → Is market overleveraged?
+    4. 🤖 get_ai_trading_signals → What does TM recommend?
+    5. 📈 analyze_trade_opportunity → Check my historical performance
 
-    WORKFLOW FOR EACH TRADE:
-    1. Check Token Metrics signals first (get_ai_trading_signals)
-    2. Call analyze_trade_opportunity to check your historical performance
-    3. If both signals align → higher confidence trade
-    4. Execute simulate_trade and record the outcome
-    5. Learn from results
+    ONLY TRADE WHEN:
+    - In a killzone window (session timing good)
+    - Whales are accumulating (on-chain bullish)
+    - Funding not extreme (no crowded trade)
+    - Token Metrics agrees with direction
 
-    === RECOMMENDATION LEVELS ===
-
-    - GO: Token Metrics + your analysis both bullish → proceed
-    - CAUTION: Signals mixed → smaller position or skip
-    - AVOID: Both signals bearish → don't trade
+    Then: simulate_trade and LEARN from the outcome!
 
     === STRATEGIES ===
 
-    - Momentum: Works in trending markets, use with Token Metrics BUY signals
-    - Mean Reversion: Works in ranging markets, use when RSI extreme
+    - Momentum: Use in uptrends with session timing
+    - Mean Reversion: Use at liquidity sweeps during killzones
+    - Session Sweep: Trade Asian/London sweeps during opens
 
     === LEARNING EVOLUTION ===
 
-    - 0-50 trades: Building data, rely more on Token Metrics signals
-    - 50-100 trades: Your patterns emerge, blend both data sources
-    - 100+ trades: High confidence, you know what works
-    - Target: 70% win rate through systematic learning
+    Phase 1 (0-50 trades): Use Token Metrics + Session timing
+    Phase 2 (50-100 trades): Add on-chain confirmation
+    Phase 3 (100+ trades): Full system integration
+    Target: 70% win rate through systematic learning
 
-    IMPORTANT: All trades are PRIVATE and recorded to database only. Never share trade details publicly.`,
+    IMPORTANT: All trades are PRIVATE. Never share trade details publicly.`,
 
     functions: [
-        // Token Metrics AI signals (use first for 70% win rate!)
+        // NEW: Session & Timing Analysis
+        getSessionAnalysisFunction,           // Check killzones and market sessions
+
+        // NEW: On-Chain Analytics
+        getOnChainAnalysisFunction,           // Whale behavior + exchange flows
+        getWhaleAlertsFunction,               // Large transaction alerts
+        getFundingRatesFunction,              // Futures market positioning
+        getOpenInterestFunction,              // Leverage analysis
+
+        // NEW: Backtesting
+        runBacktestFunction,                  // Validate strategy on historical data
+        compareStrategiesFunction,            // Compare multiple strategies
+
+        // Token Metrics AI signals (use for 70% win rate!)
         ...(isTokenMetricsAvailable() ? [
-            getAITradingSignalsFunction,      // LONG/SHORT signals with strategy returns
-            getTokenGradesFunction,           // TM grades (0-100) with action guidance
-            getResistanceSupportFunction,     // Entry/exit zones with suggestions
+            getAITradingSignalsFunction,      // LONG/SHORT signals
+            getTokenGradesFunction,           // TM grades (0-100)
+            getResistanceSupportFunction,     // Entry/exit zones
             getPricePredictionsFunction,      // AI price targets
-            getHourlySignalsFunction,         // More frequent signals
-            getHourlyOHLCVFunction,           // Hourly candles for short-term analysis
-            getDailyOHLCVFunction,            // Daily candles for longer-term trends
-            getMarketMetricsFunction,         // Overall market sentiment & guidance
-            askAIAgentFunction,               // Ask TM AI for insights
-            getMoonshotTokensFunction         // AI-curated high potential picks
+            getHourlySignalsFunction,         // Frequent signals
+            getHourlyOHLCVFunction,           // Hourly candles
+            getDailyOHLCVFunction,            // Daily candles
+            getMarketMetricsFunction,         // Market sentiment
+            askAIAgentFunction,               // Ask TM AI
+            getMoonshotTokensFunction,        // High potential picks
+            // NEW: Advanced Token Metrics
+            getInvestorGradeFunction,         // Long-term fundamentals
+            getQuantMetricsFunction,          // Risk metrics (Sharpe, drawdown)
+            getCorrelationDataFunction,       // BTC correlation
+            getAIIndicesFunction              // Model portfolios
         ] : []),
+
         // Your analysis and execution
         analyzeTradeOpportunityFunction,
         simulateTradeFunction
